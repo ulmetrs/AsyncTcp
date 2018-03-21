@@ -1,31 +1,30 @@
 ﻿using System;
-using System.Diagnostics;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
-using System.IO;
 
 namespace AsyncTcp
 {
     public class AsyncClient
     {
-        // List of Peers
-        public AsyncPeer _server;
         // Handler
-        private AsyncHandler _handler;
+        protected AsyncHandler _handler;
+        // Keep Alive Thread
+        protected Thread _keepAlive;
+        // Keep Alive Time
+        protected int _keepAliveTime;
+        // Server Peer
+        public AsyncPeer _server;
         // Thread signal
         private ManualResetEvent _allDone;
-        // Keep Alive Thread
-        private Thread _keepAlive;
-        // Keep alive time
-        private int _keepAliveTime;
 
         public AsyncClient(AsyncHandler handler, int keepAliveTimeMs)
         {
             _handler = handler;
-            _allDone = new ManualResetEvent(false);
             _keepAlive = new Thread(() => KeepAlive());
             _keepAliveTime = keepAliveTimeMs;
+            _allDone = new ManualResetEvent(false);
         }
 
         public bool IsConnected()
@@ -143,14 +142,8 @@ namespace AsyncTcp
                 // I believe zero reads indicate the client has disconnected gracefully
                 if (numBytes <= 0)
                 {
-                    Console.WriteLine("EndSend Received 0 bytes, Disconnecting : " + peer.socket.LocalEndPoint);
+                    Console.WriteLine("EndReceived Received 0 bytes, Disconnecting : " + peer);
                     Disconnect();
-                }
-
-                // Log non-keepalives (REMOVE)
-                if (numBytes > 8)
-                {
-                    Console.WriteLine("Byte {0} to {1} out of {2} received", peer.stream.Position, peer.stream.Position + numBytes, peer.dataSize);
                 }
                 
                 // Add the read bytes to the current stream
@@ -158,9 +151,9 @@ namespace AsyncTcp
 
                 ParseRead(peer);
             }
-            catch
+            catch (Exception e)
             {
-                Console.WriteLine("EndReceive Error, Disconnecting : " + peer.socket.LocalEndPoint);
+                Console.WriteLine("EndReceive Error : " + e.ToString() + "\nDisconnecting Peer: " + peer);
                 Disconnect();
             }
         }
@@ -191,6 +184,8 @@ namespace AsyncTcp
             // We have read enough data to complete a message
             else
             {
+                byte[] data = null;
+                // If we actually have a payload
                 if (peer.dataSize > 0)
                 {
                     // Store our write position
@@ -198,13 +193,12 @@ namespace AsyncTcp
                     // Seek to the beginning of our data (byte 8)
                     peer.stream.Seek(8, SeekOrigin.Begin);
                     // Create a data-sized array for our callback
-                    byte[] data = new byte[peer.dataSize];
+                    data = new byte[peer.dataSize];
                     // Read up to our data boundary
                     peer.stream.Read(data, 0, peer.dataSize);
-                    // TODO should we handle in a new task? do we need to?
-                    _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
                 }
-
+                // TODO should we handle in a new task? do we need to?
+                _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
                 // Reset our state variables
                 peer.dataType = -1;
                 peer.dataSize = -1;
@@ -223,6 +217,11 @@ namespace AsyncTcp
 
         public void Send(AsyncPeer peer, int dataType, int dataSize, byte[] data)
         {
+            // Sanity check, client should know not to send messages to disconnected server
+            if (peer.socket == null)
+            {
+                return;
+            }
             // Spin until we can safely send data (We have a polling mechanism sending keepalive messages)
             SpinWait.SpinUntil(() => peer.sendIndex == -1);
             // Set our send index
@@ -256,12 +255,6 @@ namespace AsyncTcp
                 // Complete sending the data to the remote device.  
                 int numBytes = peer.socket.EndSend(ar);
 
-                // Log actual messages (REMOVE)
-                if (peer.sendBuffer.Length > 8)
-                {
-                    Console.WriteLine("Byte {0} to {1} out of {2} sent", peer.sendIndex, peer.sendIndex + numBytes, peer.sendBuffer.Length);
-                }
-
                 // Increment our send index
                 peer.sendIndex += numBytes;
                 // We are not done sending message
@@ -280,7 +273,7 @@ namespace AsyncTcp
             }
             catch (Exception e)
             {
-                Console.WriteLine("SEND CALLBACK ERROR " + e.ToString());
+                Console.WriteLine("SEND CALLBACK ERROR " + e.ToString() + "\nDisconnecting Peer " + peer);
                 Disconnect();
             }
         }

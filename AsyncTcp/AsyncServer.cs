@@ -1,17 +1,20 @@
 ﻿using System;
-using System.Diagnostics;
+using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
-using System.Collections.Generic;
-using System.IO;
 
 namespace AsyncTcp
 {
     public class AsyncServer
     {
         // Handler
-        private AsyncHandler _handler;
+        protected AsyncHandler _handler;
+        // Keep Alive Thread
+        protected Thread _keepAlive;
+        // Keep Alive Time
+        protected int _keepAliveTime;
         // List of Peers
         public List<AsyncPeer> _peers;
         // Lock for _peers
@@ -24,23 +27,17 @@ namespace AsyncTcp
         private int _port;
         // Thread signal
         private ManualResetEvent _allDone;
-        // Keep Alive Thread
-        private Thread _keepAlive;
-        // Keep Alive Time
-        private int _keepAliveTime;
-
-        // TODO implement keep alive message handling from the client
-        // TODO implement a polling thread that regularly cleans up half-open sockets (I think this should work)
 
         public AsyncServer(AsyncHandler handler, int keepAliveTimeMs) {
             _handler = handler;
+            _keepAlive = new Thread(() => KeepAlive());
+            _keepAliveTime = keepAliveTimeMs;
+
             _peers = new List<AsyncPeer>();
             _peerLock = new object();
             _server = new Thread(() => Server());
             _stopServer = false;
             _allDone = new ManualResetEvent(false);
-            _keepAlive = new Thread(() => KeepAlive());
-            _keepAliveTime = keepAliveTimeMs;
         }
 
         public void Start(int port)
@@ -153,14 +150,8 @@ namespace AsyncTcp
                 // I believe zero reads indicate the client has disconnected gracefully
                 if (numBytes <= 0)
                 {
-                    Debug.WriteLine("EndSend Received 0 bytes, Removing Peer : " + peer.socket.LocalEndPoint);
+                    Console.WriteLine("EndReceived Received 0 bytes, Removing Peer : " + peer);
                     RemovePeer(peer);
-                }
-
-                // Log non-keepalives (REMOVE)
-                if (numBytes > 8)
-                {
-                    Console.WriteLine("Byte {0} to {1} out of {2} received", peer.stream.Position, peer.stream.Position + numBytes, peer.dataSize);
                 }
 
                 // Add the read bytes to the current stream
@@ -168,14 +159,15 @@ namespace AsyncTcp
 
                 ParseRead(peer);
             }
-            catch
+            catch (Exception e)
             {
-                Debug.WriteLine("EndReceive Error, Removing Peer : " + peer.socket.LocalEndPoint);
+                Console.WriteLine("EndReceive Error : " + e.ToString() + "\nRemoving Peer: " + peer);
                 RemovePeer(peer);
             }
         }
 
-        private void ParseRead(AsyncPeer peer) {
+        private void ParseRead(AsyncPeer peer)
+        {
 
             // We have not yet read our message header (data type and size) but have enough bytes to
             if (peer.dataSize < 0 && peer.stream.Position >= 8)
@@ -200,6 +192,8 @@ namespace AsyncTcp
             // We have read enough data to complete a message
             else
             {
+                byte[] data = null;
+                // If we actually have a payload
                 if (peer.dataSize > 0)
                 {
                     // Store our write position
@@ -207,13 +201,12 @@ namespace AsyncTcp
                     // Seek to the beginning of our data (byte 8)
                     peer.stream.Seek(8, SeekOrigin.Begin);
                     // Create a data-sized array for our callback
-                    byte[] data = new byte[peer.dataSize];
+                    data = new byte[peer.dataSize];
                     // Read up to our data boundary
                     peer.stream.Read(data, 0, peer.dataSize);
-                    // TODO should we handle in a new task? do we need to?
-                    _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
                 }
-
+                // TODO should we handle in a new task? do we need to?
+                _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
                 // Reset our state variables
                 peer.dataType = -1;
                 peer.dataSize = -1;
@@ -230,9 +223,15 @@ namespace AsyncTcp
             }
         }
 
+        // Send a message to the remote peer
         public void Send(AsyncPeer peer, int dataType, int dataSize, byte[] data)
         {
-            // Spin until we can safely send data (We have a polling mechanism sending keepalive messages)
+            // Sanity check, server should know not to send messages to disconnected clients
+            if (peer.socket == null)
+            {
+                return;
+            }
+            // Spin until we can safely send data, our keepalives and rapid sends need not conflict
             SpinWait.SpinUntil(() => peer.sendIndex == -1);
             // Set our send index
             peer.sendIndex = 0;
@@ -248,7 +247,7 @@ namespace AsyncTcp
                     if (data != null)
                     {
                         writer.Write(data, 0, dataSize);
-                    }    
+                    }
                 }
             }
             // Begin sending the data to the remote device.  
@@ -265,12 +264,6 @@ namespace AsyncTcp
                 // Complete sending the data to the remote device.  
                 int numBytes = peer.socket.EndSend(ar);
 
-                // Log actual messages (REMOVE)
-                if (peer.sendBuffer.Length > 8)
-                {
-                    Console.WriteLine("Byte {0} to {1} out of {2} sent", peer.sendIndex, peer.sendIndex + numBytes, peer.sendBuffer.Length);
-                }
-                
                 // Increment our send index
                 peer.sendIndex += numBytes;
                 // We are not done sending message
@@ -287,25 +280,39 @@ namespace AsyncTcp
                     peer.sendIndex = -1;
                 }
             }
-            catch
+            catch (Exception e)
             {
-                Debug.WriteLine("EndSend Error, Removing Peer : " + peer.socket.LocalEndPoint);
+                // TODO maybe we can wait for receive to remove peer
+                Console.WriteLine("EndSend Error " + e.ToString() + "\nRemoving Peer : " + peer);
                 RemovePeer(peer);
             }
         }
 
         private void RemovePeer(AsyncPeer peer)
         {
-            // Callback to AsyncHandler, should we do this on a new task?
-            // If so make sure to not access socket reference
-            _handler.PeerDisconnected(peer);
-            // Close the socket on our end
-            peer.socket.Shutdown(SocketShutdown.Both);
-            peer.socket.Close();
-            // Remove our peer
-            lock (_peerLock)
+            if (peer.socket == null)
             {
-                _peers.Remove(peer);
+                return;
+            }
+            try
+            {
+                // Callback to AsyncHandler, should we do this on a new task?
+                // If so make sure to not access socket reference
+                _handler.PeerDisconnected(peer);
+                // Close the socket on our end
+                peer.socket.Shutdown(SocketShutdown.Both);
+                peer.socket.Close();
+                peer.socket = null;
+                // Remove our peer
+                lock (_peerLock)
+                {
+                    _peers.Remove(peer);
+                }
+            }
+            catch (Exception e)
+            {
+                // Should never get here, so print the exception for debugging
+                Console.WriteLine(e.ToString());
             }
         }
 
@@ -319,7 +326,7 @@ namespace AsyncTcp
                 {
                     return;
                 }
-                // Keep Alive timer
+                // Keep Alive timer TODO allocate for actual time (it takes time to iterate and send messages)
                 Thread.Sleep(_keepAliveTime);
                 // Make a shallow copy of our peers list
                 lock (_peers)
@@ -329,7 +336,11 @@ namespace AsyncTcp
                 // Iterate over our copy and send keep-alive messages
                 foreach (AsyncPeer peer in peers)
                 {
-                    Send(peer, 0, 0, null);
+                    // Don't send if our socket has been shut down, remember we iterated a shallow copy of our peers list
+                    if (peer.socket != null)
+                    {
+                        Send(peer, 0, 0, null);
+                    }
                 }
             }
         }
