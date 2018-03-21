@@ -1,9 +1,0 @@
-C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcp\bin\Debug\netstandard2.0\AsyncTcp.deps.json
-C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcp\bin\Debug\netstandard2.0\AsyncTcp.dll
-C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcp\bin\Debug\netstandard2.0\AsyncTcp.pdb
-C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcp\obj\Debug\netstandard2.0\AsyncTcp.csproj.CoreCompileInputs.cache
-C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcp\obj\Debug\netstandard2.0\AsyncTcp.AssemblyInfoInputs.cache
-C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcp\obj\Debug\netstandard2.0\AsyncTcp.AssemblyInfo.cs
-C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcp\obj\Debug\netstandard2.0\AsyncTcp.dll
-C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcp\obj\Debug\netstandard2.0\AsyncTcp.pdb
-C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcp\obj\Debug\netstandard2.0\AsyncTcp.csprojResolveAssemblyReference.cache
