@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace AsyncTcp
 {
@@ -10,42 +11,49 @@ namespace AsyncTcp
     {
         // Handler
         protected AsyncHandler _handler;
-        // Keep Alive Thread
-        protected Thread _keepAlive;
         // Keep Alive Time
         protected int _keepAliveTime;
+        // Keep Alive Task
+        protected Task _keepAlive;
+        
         // Server Peer
         public AsyncPeer _server;
+        // Server host
+        private string _hostName;
+        // Server port
+        private int _port;
+        // Client kill bool
+        private bool _stopClient;
         // Thread signal
         private ManualResetEvent _allDone;
 
         public AsyncClient(AsyncHandler handler, int keepAliveTimeMs)
         {
             _handler = handler;
-            _keepAlive = new Thread(() => KeepAlive());
             _keepAliveTime = keepAliveTimeMs;
             _allDone = new ManualResetEvent(false);
         }
 
-        public bool IsConnected()
+        public Task Start(string hostname, int port)
         {
-            return _server != null && _keepAlive.IsAlive;
+            _stopClient = false;
+            _hostName = hostname;
+            _port = port;
+
+            // Start our client thread
+            return Task.Run(() => Connect());
         }
 
-        public bool Connect(string hostName, int port)
+        public void Connect()
         {
-            if (IsConnected())
-            {
-                return false;
-            }
             try
             {
                 // Connect to a remote device.
-                IPHostEntry ipHostInfo = Dns.GetHostEntry(hostName);
+                IPHostEntry ipHostInfo = Dns.GetHostEntry(_hostName);
                 IPAddress ipAddress = ipHostInfo.AddressList[0];
-                IPEndPoint remoteEP = new IPEndPoint(ipAddress, port);
+                IPEndPoint remoteEP = new IPEndPoint(ipAddress, _port);
 
-                Console.WriteLine("hostname : " + hostName + "   ip : " + ipAddress + "   port : " + port);
+                Console.WriteLine("hostname : " + _hostName + "   ip : " + ipAddress + "   port : " + _port);
 
                 // Create a TCP/IP socket.  
                 Socket socket = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
@@ -58,45 +66,46 @@ namespace AsyncTcp
                 _allDone.WaitOne();
 
                 if (_server == null)
-                    return false;
+                {
+                    return;
+                }
 
-                // Start our keep-alive thread
-                _keepAlive.Start();
 
-                return true;
+                /// Start our keep-alive thread
+                _keepAlive = Task.Run(() => KeepAlive());
+
+                while (true)
+                {
+                    if (_stopClient)
+                    {
+                        Task.WaitAll(_keepAlive);
+                        return;
+                    }
+                    Thread.Sleep(3000);
+                }
             }
             catch (Exception e)
             {
                 Console.WriteLine("CONNECT ERROR " + e.ToString());
             }
-
-            return false;
         }
 
-        public bool Disconnect()
+        public void Disconnect()
         {
-            if (!IsConnected())
-            {
-                return false;
-            }
             try
             {
-                // Callback to AsyncHandler, should we do this on a new task?
-                // If so make sure to not access socket reference
                 _handler.PeerDisconnected(_server);
 
                 _server.socket.Shutdown(SocketShutdown.Both);
                 _server.socket.Close();
                 _server = null;
-
-                return true;
             }
             catch (Exception e)
             {
                 Console.WriteLine("DISCONNECT ERROR " + e.ToString());
             }
 
-            return false;
+            _stopClient = true;
         }
 
         private void ConnectCallback(IAsyncResult ar)

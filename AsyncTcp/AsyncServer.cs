@@ -4,54 +4,47 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace AsyncTcp
 {
     public class AsyncServer
     {
         // Handler
-        protected AsyncHandler _handler;
-        // Keep Alive Thread
-        protected Thread _keepAlive;
+        private AsyncHandler _handler;
         // Keep Alive Time
-        protected int _keepAliveTime;
+        private int _keepAliveTime;
+        // Keep Alive Task
+        private Task _keepAlive;
+
         // List of Peers
         public List<AsyncPeer> _peers;
         // Lock for _peers
         private object _peerLock;
-        // Server thread
-        private Thread _server;
+        // Listening port
+        private int _port;
         // Server kill bool
         private bool _stopServer;
-        // Server port
-        private int _port;
         // Thread signal
         private ManualResetEvent _allDone;
 
         public AsyncServer(AsyncHandler handler, int keepAliveTimeMs) {
             _handler = handler;
-            _keepAlive = new Thread(() => KeepAlive());
             _keepAliveTime = keepAliveTimeMs;
 
             _peers = new List<AsyncPeer>();
             _peerLock = new object();
-            _server = new Thread(() => Server());
             _stopServer = false;
             _allDone = new ManualResetEvent(false);
         }
 
-        public void Start(int port)
+        public Task Start(int port)
         {
-            if (IsRunning())
-            {
-                return;
-            }
-
             _stopServer = false;
             _port = port;
-            
+
             // Start our server thread
-            _server.Start();
+            return Task.Run(() => Accept());
         }
 
         public void Stop()
@@ -59,12 +52,7 @@ namespace AsyncTcp
             _stopServer = true;
         }
 
-        public bool IsRunning()
-        {
-            return _server.IsAlive || _keepAlive.IsAlive;
-        }
-
-        private void Server()
+        private void Accept()
         {
             try
             {
@@ -84,12 +72,13 @@ namespace AsyncTcp
                 listener.Listen(100);
 
                 // Start our keep-alive thread
-                _keepAlive.Start();
+                _keepAlive = Task.Run(() => KeepAlive());
 
                 while (true)
                 {
                     if (_stopServer)
                     {
+                        Task.WaitAll(_keepAlive);
                         return;
                     }
                     // Set the event to nonsignaled state.  
@@ -134,10 +123,10 @@ namespace AsyncTcp
             _handler.PeerConnected(peer);
 
             // Begin async receiving data
-            handler.BeginReceive(peer.recvBuffer, 0, 1024, 0, new AsyncCallback(ReadCallback), peer);
+            handler.BeginReceive(peer.recvBuffer, 0, 1024, 0, new AsyncCallback(ReceiveCallback), peer);
         }
 
-        private void ReadCallback(IAsyncResult ar)
+        private void ReceiveCallback(IAsyncResult ar)
         {
             // Retrieve the state object
             AsyncPeer peer = (AsyncPeer)ar.AsyncState;
@@ -157,7 +146,7 @@ namespace AsyncTcp
                 // Add the read bytes to the current stream
                 peer.stream.Write(peer.recvBuffer, 0, numBytes);
 
-                ParseRead(peer);
+                ParseReceive(peer);
             }
             catch (Exception e)
             {
@@ -166,7 +155,7 @@ namespace AsyncTcp
             }
         }
 
-        private void ParseRead(AsyncPeer peer)
+        private void ParseReceive(AsyncPeer peer)
         {
 
             // We have not yet read our message header (data type and size) but have enough bytes to
@@ -187,7 +176,7 @@ namespace AsyncTcp
             // We have more data to read
             if (peer.dataSize < 0 || (peer.stream.Position < (peer.dataSize + 8)))
             {
-                peer.socket.BeginReceive(peer.recvBuffer, 0, 1024, 0, new AsyncCallback(ReadCallback), peer);
+                peer.socket.BeginReceive(peer.recvBuffer, 0, 1024, 0, new AsyncCallback(ReceiveCallback), peer);
             }
             // We have read enough data to complete a message
             else
@@ -219,7 +208,7 @@ namespace AsyncTcp
                 // Set the peer's stream to the new stream
                 peer.stream = newStream;
                 // Parse the new stream, our stream may have contained multiple messages
-                ParseRead(peer);
+                ParseReceive(peer);
             }
         }
 
