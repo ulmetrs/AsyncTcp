@@ -44,7 +44,7 @@ namespace AsyncTcp
             return Task.Run(() => Connect());
         }
 
-        public void Connect()
+        private void Connect()
         {
             try
             {
@@ -224,20 +224,20 @@ namespace AsyncTcp
             }
         }
 
-        public void Send(AsyncPeer peer, int dataType, int dataSize, byte[] data)
+        public void Send(int dataType, int dataSize, byte[] data)
         {
             // Sanity check, client should know not to send messages to disconnected server
-            if (peer.socket == null)
+            if (_server == null || _server.socket == null)
             {
                 return;
             }
             // Spin until we can safely send data (We have a polling mechanism sending keepalive messages)
-            SpinWait.SpinUntil(() => peer.sendIndex == -1);
+            SpinWait.SpinUntil(() => _server.sendIndex == -1);
             // Set our send index
-            peer.sendIndex = 0;
+            _server.sendIndex = 0;
             // Set our state buffer
-            peer.sendBuffer = new byte[dataSize + 8];
-            using (MemoryStream stream = new MemoryStream(peer.sendBuffer))
+            _server.sendBuffer = new byte[dataSize + 8];
+            using (MemoryStream stream = new MemoryStream(_server.sendBuffer))
             {
                 using (BinaryWriter writer = new BinaryWriter(stream))
                 {
@@ -251,7 +251,7 @@ namespace AsyncTcp
                 }
             }
             // Begin sending the data to the remote device.  
-            peer.socket.BeginSend(peer.sendBuffer, 0, peer.sendBuffer.Length, 0, new AsyncCallback(SendCallback), peer);
+            _server.socket.BeginSend(_server.sendBuffer, 0, _server.sendBuffer.Length, 0, new AsyncCallback(SendCallback), _server);
         }
 
         private void SendCallback(IAsyncResult ar)
@@ -292,11 +292,11 @@ namespace AsyncTcp
             while (true)
             {
                 Thread.Sleep(_keepAliveTime);
-                if (_server == null)
+                if (_server == null || _server.socket == null)
                 {
                     return;
                 }
-                Send(_server, 0, 0, null);
+                Send(0, 0, null);
             }
         }
     }
