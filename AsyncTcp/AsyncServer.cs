@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -81,11 +82,14 @@ namespace AsyncTcp
                         Task.WaitAll(_keepAlive);
                         return;
                     }
+
+                    //Console.WriteLine("Begin Accepting New Socket, Open Handles : " + Process.GetCurrentProcess().HandleCount);
+
                     // Set the event to nonsignaled state.  
                     _allDone.Reset();
 
                     // Start an asynchronous socket to listen for connections.  
-                    Console.WriteLine("Waiting for a connection...");
+                    //Console.WriteLine("Waiting for a connection...");
                     listener.BeginAccept(new AsyncCallback(AcceptCallback), listener);
 
                     // Wait until a connection is made before continuing.  TODO give a timeout so we can exit if server stop was requested

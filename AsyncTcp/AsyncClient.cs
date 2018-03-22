@@ -63,7 +63,7 @@ namespace AsyncTcp
 
                 // Connect to the remote endpoint.  
                 socket.BeginConnect(remoteEP, new AsyncCallback(ConnectCallback), socket);
-                _allDone.WaitOne();
+                _allDone.WaitOne(5000);
 
                 if (_server == null)
                 {

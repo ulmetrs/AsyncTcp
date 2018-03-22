@@ -4,3 +4,6 @@ AsyncTcp/obj/
 .vs/AsyncTcp/v15/Server/sqlite3/storage.ide
 .vs/AsyncTcp/v15/.suo
 .vs/AsyncTcp/v15/.suo
+.vs/AsyncTcp/v15/.suo
+*.ide
+.vs/AsyncTcp/v15/Server/sqlite3/storage.ide
