@@ -288,6 +288,7 @@ namespace AsyncTcp
 
         private void KeepAlive()
         {
+            DataPacket health = new DataPacket(); // Empty packet
             while (true)
             {
                 Thread.Sleep(_keepAliveTime);
@@ -295,7 +296,7 @@ namespace AsyncTcp
                 {
                     return;
                 }
-                Send(new DataPacket());
+                Send(health);
             }
         }
     }

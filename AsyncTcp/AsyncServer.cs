@@ -197,7 +197,7 @@ namespace AsyncTcp
                     // Read up to our data boundary
                     peer.stream.Read(data, 0, peer.dataSize);
                 }
-                // TODO should we handle in a new task? do we need to?
+                // TODO should we handle in a new task? do we need to? Should we try to reuse data packets?
                 _handler.DataReceived(peer, new DataPacket() { dataType = peer.dataType, dataSize = peer.dataSize, data = data });
                 // Reset our state variables
                 peer.dataType = -1;
@@ -311,6 +311,7 @@ namespace AsyncTcp
         {
             // Garbage collector should be deleting these copies, perhaps should be more efficient way?
             List<AsyncPeer> peers;
+            DataPacket health = new DataPacket(); // Empty packet
             while (true)
             {
                 if (_stopServer)
@@ -320,6 +321,7 @@ namespace AsyncTcp
                 // Keep Alive timer TODO allocate for actual time (it takes time to iterate and send messages)
                 Thread.Sleep(_keepAliveTime);
                 // Make a shallow copy of our peers list
+                // TODO is it necessary that we lock this?
                 lock (_peers)
                 {
                     peers = new List<AsyncPeer>(_peers);
@@ -330,7 +332,7 @@ namespace AsyncTcp
                     // Don't send if our socket has been shut down, remember we iterated a shallow copy of our peers list
                     if (peer.socket != null)
                     {
-                        Send(peer, new DataPacket());
+                        Send(peer, health);
                     }
                 }
             }
