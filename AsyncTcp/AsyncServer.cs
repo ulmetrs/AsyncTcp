@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -143,7 +142,7 @@ namespace AsyncTcp
                 // I believe zero reads indicate the client has disconnected gracefully
                 if (numBytes <= 0)
                 {
-                    Console.WriteLine("EndReceived Received 0 bytes, Removing Peer : " + peer);
+                    //Console.WriteLine("EndReceived Received 0 bytes, Removing Peer : " + peer);
                     RemovePeer(peer);
                 }
 
@@ -154,7 +153,7 @@ namespace AsyncTcp
             }
             catch (Exception e)
             {
-                Console.WriteLine("EndReceive Error : " + e.ToString() + "\nRemoving Peer: " + peer);
+                //Console.WriteLine("EndReceive Error : " + e.ToString() + "\nRemoving Peer: " + peer);
                 RemovePeer(peer);
             }
         }
@@ -199,7 +198,7 @@ namespace AsyncTcp
                     peer.stream.Read(data, 0, peer.dataSize);
                 }
                 // TODO should we handle in a new task? do we need to?
-                _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
+                _handler.DataReceived(peer, new DataPacket() { dataType = peer.dataType, dataSize = peer.dataSize, data = data });
                 // Reset our state variables
                 peer.dataType = -1;
                 peer.dataSize = -1;
@@ -217,7 +216,7 @@ namespace AsyncTcp
         }
 
         // Send a message to the remote peer
-        public void Send(AsyncPeer peer, int dataType, int dataSize, byte[] data)
+        public void Send(AsyncPeer peer, DataPacket packet)
         {
             // Sanity check, server should know not to send messages to disconnected clients
             if (peer.socket == null)
@@ -229,17 +228,17 @@ namespace AsyncTcp
             // Set our send index
             peer.sendIndex = 0;
             // Set our state buffer
-            peer.sendBuffer = new byte[dataSize + 8];
+            peer.sendBuffer = new byte[packet.dataSize + 8];
             using (MemoryStream stream = new MemoryStream(peer.sendBuffer))
             {
                 using (BinaryWriter writer = new BinaryWriter(stream))
                 {
-                    writer.Write(dataType);
-                    writer.Write(dataSize);
+                    writer.Write(packet.dataType);
+                    writer.Write(packet.dataSize);
                     // We have no data in keep alive packets
-                    if (data != null)
+                    if (packet.data != null)
                     {
-                        writer.Write(data, 0, dataSize);
+                        writer.Write(packet.data, 0, packet.dataSize);
                     }
                 }
             }
@@ -276,7 +275,7 @@ namespace AsyncTcp
             catch (Exception e)
             {
                 // TODO maybe we can wait for receive to remove peer
-                Console.WriteLine("EndSend Error " + e.ToString() + "\nRemoving Peer : " + peer);
+                //Console.WriteLine("EndSend Error " + e.ToString() + "\nRemoving Peer : " + peer);
                 RemovePeer(peer);
             }
         }
@@ -304,7 +303,6 @@ namespace AsyncTcp
             }
             catch (Exception e)
             {
-                // Should never get here, so print the exception for debugging
                 Console.WriteLine(e.ToString());
             }
         }
@@ -332,7 +330,7 @@ namespace AsyncTcp
                     // Don't send if our socket has been shut down, remember we iterated a shallow copy of our peers list
                     if (peer.socket != null)
                     {
-                        Send(peer, 0, 0, null);
+                        Send(peer, new DataPacket());
                     }
                 }
             }

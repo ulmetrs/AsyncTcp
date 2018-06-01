@@ -70,7 +70,6 @@ namespace AsyncTcp
                     return;
                 }
 
-
                 /// Start our keep-alive thread
                 _keepAlive = Task.Run(() => KeepAlive());
 
@@ -151,7 +150,7 @@ namespace AsyncTcp
                 // I believe zero reads indicate the client has disconnected gracefully
                 if (numBytes <= 0)
                 {
-                    Console.WriteLine("EndReceived Received 0 bytes, Disconnecting : " + peer);
+                    //Console.WriteLine("EndReceived Received 0 bytes, Disconnecting : " + peer);
                     Disconnect();
                 }
                 
@@ -162,7 +161,7 @@ namespace AsyncTcp
             }
             catch (Exception e)
             {
-                Console.WriteLine("EndReceive Error : " + e.ToString() + "\nDisconnecting Peer: " + peer);
+                //Console.WriteLine("EndReceive Error : " + e.ToString() + "\nDisconnecting Peer: " + peer);
                 Disconnect();
             }
         }
@@ -207,7 +206,7 @@ namespace AsyncTcp
                     peer.stream.Read(data, 0, peer.dataSize);
                 }
                 // TODO should we handle in a new task? do we need to?
-                _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
+                _handler.DataReceived(peer, new DataPacket() { dataType = peer.dataType, dataSize = peer.dataSize, data = data });
                 // Reset our state variables
                 peer.dataType = -1;
                 peer.dataSize = -1;
@@ -224,7 +223,7 @@ namespace AsyncTcp
             }
         }
 
-        public void Send(int dataType, int dataSize, byte[] data)
+        public void Send(DataPacket packet)
         {
             // Sanity check, client should know not to send messages to disconnected server
             if (_server == null || _server.socket == null)
@@ -236,17 +235,17 @@ namespace AsyncTcp
             // Set our send index
             _server.sendIndex = 0;
             // Set our state buffer
-            _server.sendBuffer = new byte[dataSize + 8];
+            _server.sendBuffer = new byte[packet.dataSize + 8];
             using (MemoryStream stream = new MemoryStream(_server.sendBuffer))
             {
                 using (BinaryWriter writer = new BinaryWriter(stream))
                 {
-                    writer.Write(dataType);
-                    writer.Write(dataSize);
+                    writer.Write(packet.dataType);
+                    writer.Write(packet.dataSize);
                     // We have no data in keep alive packets
-                    if (data != null)
+                    if (packet.data != null)
                     {
-                        writer.Write(data, 0, dataSize);
+                        writer.Write(packet.data, 0, packet.dataSize);
                     }
                 }
             }
@@ -296,7 +295,7 @@ namespace AsyncTcp
                 {
                     return;
                 }
-                Send(0, 0, null);
+                Send(new DataPacket());
             }
         }
     }
