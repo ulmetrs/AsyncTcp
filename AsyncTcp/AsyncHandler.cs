@@ -2,15 +2,8 @@
 {
     public interface AsyncHandler
     {
-        void DataReceived(AsyncPeer peer, DataPacket packet);
+        void DataReceived(AsyncPeer peer, int dataType, int dataSize, byte[] data);
         void PeerConnected(AsyncPeer peer);
         void PeerDisconnected(AsyncPeer peer);
-    }
-
-    public class DataPacket
-    {
-        public int dataType;
-        public int dataSize;
-        public byte[] data;
     }
 }

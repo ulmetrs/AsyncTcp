@@ -161,7 +161,7 @@ namespace AsyncTcp
             }
             catch (Exception e)
             {
-                //Console.WriteLine("EndReceive Error : " + e.ToString() + "\nDisconnecting Peer: " + peer);
+                Console.WriteLine("EndReceive Error : " + e.ToString() + "\nDisconnecting Peer: " + peer);
                 Disconnect();
             }
         }
@@ -205,8 +205,8 @@ namespace AsyncTcp
                     // Read up to our data boundary
                     peer.stream.Read(data, 0, peer.dataSize);
                 }
-                // TODO should we handle in a new task? do we need to?
-                _handler.DataReceived(peer, new DataPacket() { dataType = peer.dataType, dataSize = peer.dataSize, data = data });
+                // TODO should we handle in a new task?
+                _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
                 // Reset our state variables
                 peer.dataType = -1;
                 peer.dataSize = -1;
@@ -223,7 +223,7 @@ namespace AsyncTcp
             }
         }
 
-        public void Send(DataPacket packet)
+        public void Send(int dataType, int dataSize, byte[] data)
         {
             // Sanity check, client should know not to send messages to disconnected server
             if (_server == null || _server.socket == null)
@@ -235,17 +235,17 @@ namespace AsyncTcp
             // Set our send index
             _server.sendIndex = 0;
             // Set our state buffer
-            _server.sendBuffer = new byte[packet.dataSize + 8];
+            _server.sendBuffer = new byte[dataSize + 8];
             using (MemoryStream stream = new MemoryStream(_server.sendBuffer))
             {
                 using (BinaryWriter writer = new BinaryWriter(stream))
                 {
-                    writer.Write(packet.dataType);
-                    writer.Write(packet.dataSize);
+                    writer.Write(dataType);
+                    writer.Write(dataSize);
                     // We have no data in keep alive packets
-                    if (packet.data != null)
+                    if (data != null)
                     {
-                        writer.Write(packet.data, 0, packet.dataSize);
+                        writer.Write(data, 0, dataSize);
                     }
                 }
             }
@@ -288,7 +288,6 @@ namespace AsyncTcp
 
         private void KeepAlive()
         {
-            DataPacket health = new DataPacket(); // Empty packet
             while (true)
             {
                 Thread.Sleep(_keepAliveTime);
@@ -296,7 +295,7 @@ namespace AsyncTcp
                 {
                     return;
                 }
-                Send(health);
+                Send(0, 0, null);
             }
         }
     }

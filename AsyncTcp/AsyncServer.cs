@@ -151,7 +151,7 @@ namespace AsyncTcp
 
                 ParseReceive(peer);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 //Console.WriteLine("EndReceive Error : " + e.ToString() + "\nRemoving Peer: " + peer);
                 RemovePeer(peer);
@@ -197,8 +197,8 @@ namespace AsyncTcp
                     // Read up to our data boundary
                     peer.stream.Read(data, 0, peer.dataSize);
                 }
-                // TODO should we handle in a new task? do we need to? Should we try to reuse data packets?
-                _handler.DataReceived(peer, new DataPacket() { dataType = peer.dataType, dataSize = peer.dataSize, data = data });
+                // TODO should we handle in a new task?
+                _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
                 // Reset our state variables
                 peer.dataType = -1;
                 peer.dataSize = -1;
@@ -216,7 +216,7 @@ namespace AsyncTcp
         }
 
         // Send a message to the remote peer
-        public void Send(AsyncPeer peer, DataPacket packet)
+        public void Send(AsyncPeer peer, int dataType, int dataSize, byte[] data)
         {
             // Sanity check, server should know not to send messages to disconnected clients
             if (peer.socket == null)
@@ -228,17 +228,17 @@ namespace AsyncTcp
             // Set our send index
             peer.sendIndex = 0;
             // Set our state buffer
-            peer.sendBuffer = new byte[packet.dataSize + 8];
+            peer.sendBuffer = new byte[dataSize + 8];
             using (MemoryStream stream = new MemoryStream(peer.sendBuffer))
             {
                 using (BinaryWriter writer = new BinaryWriter(stream))
                 {
-                    writer.Write(packet.dataType);
-                    writer.Write(packet.dataSize);
+                    writer.Write(dataType);
+                    writer.Write(dataSize);
                     // We have no data in keep alive packets
-                    if (packet.data != null)
+                    if (data != null)
                     {
-                        writer.Write(packet.data, 0, packet.dataSize);
+                        writer.Write(data, 0, dataSize);
                     }
                 }
             }
@@ -275,7 +275,7 @@ namespace AsyncTcp
             catch (Exception e)
             {
                 // TODO maybe we can wait for receive to remove peer
-                //Console.WriteLine("EndSend Error " + e.ToString() + "\nRemoving Peer : " + peer);
+                Console.WriteLine("EndSend Error " + e.ToString() + "\nRemoving Peer : " + peer);
                 RemovePeer(peer);
             }
         }
@@ -311,7 +311,6 @@ namespace AsyncTcp
         {
             // Garbage collector should be deleting these copies, perhaps should be more efficient way?
             List<AsyncPeer> peers;
-            DataPacket health = new DataPacket(); // Empty packet
             while (true)
             {
                 if (_stopServer)
@@ -332,7 +331,7 @@ namespace AsyncTcp
                     // Don't send if our socket has been shut down, remember we iterated a shallow copy of our peers list
                     if (peer.socket != null)
                     {
-                        Send(peer, health);
+                        Send(peer, 0, 0, null);
                     }
                 }
             }
