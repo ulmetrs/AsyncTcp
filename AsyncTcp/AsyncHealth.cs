@@ -8,9 +8,8 @@ namespace AsyncTcp
     // Health Check Server that just accepts connections and closes them
     public class AsyncHealth
     {
-        // Listening port
-        private int _port;
-        // Server kill bool
+        private IPAddress _ipAddress;
+        private int _bindPort;
         private bool _stopServer;
 
         public AsyncHealth()
@@ -18,10 +17,17 @@ namespace AsyncTcp
             _stopServer = false;
         }
 
-        public Task Start(int port)
+        public Task Start(IPAddress ipAddress = null, int bindPort = 9050)
         {
+            _ipAddress = ipAddress;
+            if (_ipAddress == null)
+            {
+                IPHostEntry ipHostInfo = Dns.GetHostEntry(Dns.GetHostName());
+                _ipAddress = ipHostInfo.AddressList[0];
+            }
+            _bindPort = bindPort;
+
             _stopServer = false;
-            _port = port;
 
             // Start our server thread
             return Task.Run(() => Accept());
@@ -36,16 +42,12 @@ namespace AsyncTcp
         {
             try
             {
+                Console.WriteLine("hostname : " + Dns.GetHostName() + "   ip : " + _ipAddress + "   port : " + _bindPort);
+
                 // Establish the local endpoint for the socket.  
-                // The DNS name of the computer 
-                IPHostEntry ipHostInfo = Dns.GetHostEntry(Dns.GetHostName());
-                IPAddress ipAddress = ipHostInfo.AddressList[0];
-                IPEndPoint localEndPoint = new IPEndPoint(ipAddress, _port);
-
-                Console.WriteLine("hostname : " + Dns.GetHostName() + "   ip : " + ipAddress + "   port : " + _port);
-
+                IPEndPoint localEndPoint = new IPEndPoint(_ipAddress, _bindPort);
                 // Create a TCP/IP socket.  
-                Socket listener = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                Socket listener = new Socket(_ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
                 Socket socket;
 
                 // Bind the socket to the local endpoint and listen for incoming connections.

@@ -10,27 +10,31 @@ namespace AsyncTcp
 {
     public class AsyncServer
     {
-        // Handler
         private AsyncHandler _handler;
-        // Keep Alive Time
-        private int _keepAliveTime;
-        // Keep Alive Task
+        private int _keepAliveTimeMs;
+        private int _recvBufferSize;
+        private bool _debug;
+
+        private IPAddress _ipAddress;
+        private int _bindPort;
         private Task _keepAlive;
 
-        // List of Peers
         public List<AsyncPeer> _peers;
-        // Lock for _peers
         private object _peerLock;
-        // Listening port
-        private int _port;
-        // Server kill bool
         private bool _stopServer;
-        // Thread signal
         private ManualResetEvent _allDone;
 
-        public AsyncServer(AsyncHandler handler, int keepAliveTimeMs) {
-            _handler = handler;
-            _keepAliveTime = keepAliveTimeMs;
+        public AsyncServer(
+            AsyncHandler handler,
+            int keepAliveTimeMs = 5000,
+            int recvBufferSize = 1024,
+            bool debug = false) {
+
+            _handler = handler ?? throw new Exception("Handler cannot be null");
+            
+            _keepAliveTimeMs = keepAliveTimeMs;
+            _recvBufferSize = recvBufferSize;
+            _debug = debug;
 
             _peers = new List<AsyncPeer>();
             _peerLock = new object();
@@ -38,10 +42,17 @@ namespace AsyncTcp
             _allDone = new ManualResetEvent(false);
         }
 
-        public Task Start(int port)
+        public Task Start(IPAddress ipAddress = null, int bindPort = 9050)
         {
+            _ipAddress = ipAddress;
+            if (_ipAddress == null)
+            {
+                IPHostEntry ipHostInfo = Dns.GetHostEntry(Dns.GetHostName());
+                _ipAddress = ipHostInfo.AddressList[0];
+            }
+            _bindPort = bindPort;
+
             _stopServer = false;
-            _port = port;
 
             // Start our server thread
             return Task.Run(() => Accept());
@@ -56,16 +67,12 @@ namespace AsyncTcp
         {
             try
             {
-                // Establish the local endpoint for the socket.  
-                // The DNS name of the computer 
-                IPHostEntry ipHostInfo = Dns.GetHostEntry(Dns.GetHostName());
-                IPAddress ipAddress = ipHostInfo.AddressList[0];
-                IPEndPoint localEndPoint = new IPEndPoint(ipAddress, _port);
+                Console.WriteLine("Hostname : " + Dns.GetHostName() + "   ip : " + _ipAddress + "   port : " + _bindPort);
 
-                Console.WriteLine("hostname : " + Dns.GetHostName() + "   ip : " + ipAddress + "   port : " + _port);
- 
+                // Establish the local endpoint for the socket.  
+                IPEndPoint localEndPoint = new IPEndPoint(_ipAddress, _bindPort);
                 // Create a TCP/IP socket.  
-                Socket listener = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                Socket listener = new Socket(_ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
 
                 // Bind the socket to the local endpoint and listen for incoming connections.
                 listener.Bind(localEndPoint);
@@ -82,13 +89,10 @@ namespace AsyncTcp
                         return;
                     }
 
-                    //Console.WriteLine("Begin Accepting New Socket, Open Handles : " + Process.GetCurrentProcess().HandleCount);
-
                     // Set the event to nonsignaled state.  
                     _allDone.Reset();
 
                     // Start an asynchronous socket to listen for connections.  
-                    //Console.WriteLine("Waiting for a connection...");
                     listener.BeginAccept(new AsyncCallback(AcceptCallback), listener);
 
                     // Wait until a connection is made before continuing.  TODO give a timeout so we can exit if server stop was requested
@@ -97,7 +101,8 @@ namespace AsyncTcp
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.ToString());
+                if (_debug)
+                    Console.WriteLine(e.ToString());
             }
         }
 
@@ -113,20 +118,22 @@ namespace AsyncTcp
             // TODO investigate other socket settings
 
             // Create the state object.  
-            AsyncPeer peer = new AsyncPeer();
+            AsyncPeer peer = new AsyncPeer(_recvBufferSize);
             peer.socket = handler;
 
             // Add to the list of peers
             lock (_peerLock)
             {
                 _peers.Add(peer);
+                if (_debug)
+                    Console.WriteLine("Added to peer list, New num peers : " + _peers.Count);
             }
 
-            // Callback to AsyncHandler, should we do this on a new task?
+            // Callback to AsyncHandler
             _handler.PeerConnected(peer);
 
             // Begin async receiving data
-            handler.BeginReceive(peer.recvBuffer, 0, 1024, 0, new AsyncCallback(ReceiveCallback), peer);
+            handler.BeginReceive(peer.recvBuffer, 0, _recvBufferSize, 0, new AsyncCallback(ReceiveCallback), peer);
         }
 
         private void ReceiveCallback(IAsyncResult ar)
@@ -136,35 +143,41 @@ namespace AsyncTcp
 
             try
             {
-                // Read data from the client socket.   
+                // Reads data from the client socket up to our recv buffer size
                 int numBytes = peer.socket.EndReceive(ar);
 
-                // I believe zero reads indicate the client has disconnected gracefully
+                // I believe zero bytes read indicates the client has disconnected gracefully
                 if (numBytes <= 0)
                 {
-                    //Console.WriteLine("EndReceived Received 0 bytes, Removing Peer : " + peer);
+                    if (_debug)
+                        Console.WriteLine("EndReceived Received 0 bytes\nRemoving Peer : " + peer?.socket?.RemoteEndPoint);
                     RemovePeer(peer);
+                    return;
                 }
 
-                // Add the read bytes to the current stream
+                // Add the read bytes to the current dynamically sized stream
                 peer.stream.Write(peer.recvBuffer, 0, numBytes);
 
+                // Parse the bytes that we do have, could be an entire message, a partial message split because tcp, or partial message split because of buffer size
                 ParseReceive(peer);
             }
-            catch (Exception)
+            catch (Exception e)
             {
-                //Console.WriteLine("EndReceive Error : " + e.ToString() + "\nRemoving Peer: " + peer);
+                if (_debug)
+                    Console.WriteLine("EndReceive Error : " + e.ToString() + "\nRemoving Peer: " + peer?.socket?.RemoteEndPoint);
                 RemovePeer(peer);
             }
         }
 
         private void ParseReceive(AsyncPeer peer)
         {
+            // Investigate various buffer sizes, having a reader and a writer, etc.
+            // If I was fancy I could try larger recv buffers and use the BeginReceive index for subsequent calls, but not necessary currently
 
-            // We have not yet read our message header (data type and size) but have enough bytes to
+            // We have not yet read our message header (data size< 0) but have enough bytes to (stream position >= 8)
             if (peer.dataSize < 0 && peer.stream.Position >= 8)
             {
-                // Store our write position
+                // Store our write position to set back
                 long writePos = peer.stream.Position;
                 // Seek to the beginning of our data type
                 peer.stream.Seek(0, SeekOrigin.Begin);
@@ -176,16 +189,16 @@ namespace AsyncTcp
                 peer.stream.Seek(writePos, SeekOrigin.Begin);
             }
 
-            // We have more data to read
+            // If we havn't yet read our data size, or our stream position is < data size we have more data to read, so start async recv more bytes
             if (peer.dataSize < 0 || (peer.stream.Position < (peer.dataSize + 8)))
             {
-                peer.socket.BeginReceive(peer.recvBuffer, 0, 1024, 0, new AsyncCallback(ReceiveCallback), peer);
+                peer.socket.BeginReceive(peer.recvBuffer, 0, _recvBufferSize, 0, new AsyncCallback(ReceiveCallback), peer);
             }
             // We have read enough data to complete a message
             else
             {
                 byte[] data = null;
-                // If we actually have a payload
+                // If we actually have a payload (sometimes we have 0 data size)
                 if (peer.dataSize > 0)
                 {
                     // Store our write position
@@ -193,18 +206,18 @@ namespace AsyncTcp
                     // Seek to the beginning of our data (byte 8)
                     peer.stream.Seek(8, SeekOrigin.Begin);
                     // Create a data-sized array for our callback
-                    data = new byte[peer.dataSize];
+                    data = new byte[peer.dataSize]; // This is where im concerned with memory
                     // Read up to our data boundary
                     peer.stream.Read(data, 0, peer.dataSize);
                 }
-                // TODO should we handle in a new task?
+                // Call the handler with out copied data, type, and size
                 _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
                 // Reset our state variables
                 peer.dataType = -1;
                 peer.dataSize = -1;
                 // Create a new stream
                 MemoryStream newStream = new MemoryStream();
-                // Copy all remaining data to the new stream
+                // Copy all remaining data to the new stream (tcp can string together message bytes)
                 peer.stream.CopyTo(newStream);
                 // Dispose our old stream
                 peer.stream.Dispose();
@@ -221,6 +234,8 @@ namespace AsyncTcp
             // Sanity check, server should know not to send messages to disconnected clients
             if (peer.socket == null)
             {
+                if (_debug)
+                    Console.WriteLine("Error: Sending to a null socket");
                 return;
             }
             // Spin until we can safely send data, our keepalives and rapid sends need not conflict
@@ -235,7 +250,7 @@ namespace AsyncTcp
                 {
                     writer.Write(dataType);
                     writer.Write(dataSize);
-                    // We have no data in keep alive packets
+                    // Some packets have no additional data
                     if (data != null)
                     {
                         writer.Write(data, 0, dataSize);
@@ -275,7 +290,8 @@ namespace AsyncTcp
             catch (Exception e)
             {
                 // TODO maybe we can wait for receive to remove peer
-                Console.WriteLine("EndSend Error " + e.ToString() + "\nRemoving Peer : " + peer);
+                if (_debug)
+                    Console.WriteLine("EndSend Error " + e.ToString() + "\nRemoving Peer : " + peer?.socket?.RemoteEndPoint);
                 RemovePeer(peer);
             }
         }
@@ -284,6 +300,8 @@ namespace AsyncTcp
         {
             if (peer.socket == null)
             {
+                if (_debug)
+                    Console.WriteLine("Remove Peer Called on null socket");
                 return;
             }
             try
@@ -303,7 +321,8 @@ namespace AsyncTcp
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.ToString());
+                if (_debug)
+                    Console.WriteLine(e.ToString());
             }
         }
 
@@ -318,7 +337,7 @@ namespace AsyncTcp
                     return;
                 }
                 // Keep Alive timer TODO allocate for actual time (it takes time to iterate and send messages)
-                Thread.Sleep(_keepAliveTime);
+                Thread.Sleep(_keepAliveTimeMs);
                 // Make a shallow copy of our peers list
                 // TODO is it necessary that we lock this?
                 lock (_peers)

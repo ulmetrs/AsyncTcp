@@ -9,36 +9,36 @@ namespace AsyncTcp
 {
     public class AsyncClient
     {
-        // Handler
-        protected AsyncHandler _handler;
-        // Keep Alive Time
-        protected int _keepAliveTime;
-        // Keep Alive Task
-        protected Task _keepAlive;
-        
-        // Server Peer
-        public AsyncPeer _server;
-        // Server host
+        private AsyncHandler _handler;
+        private int _keepAliveTimeMs;
+        private int _recvBufferSize;
+
         private string _hostName;
-        // Server port
-        private int _port;
-        // Client kill bool
+        private int _bindPort;
+        private Task _keepAlive;
+
+        public AsyncPeer _server;
         private bool _stopClient;
-        // Thread signal
         private ManualResetEvent _allDone;
 
-        public AsyncClient(AsyncHandler handler, int keepAliveTimeMs)
-        {
-            _handler = handler;
-            _keepAliveTime = keepAliveTimeMs;
+        public AsyncClient(
+            AsyncHandler handler,
+            int keepAliveTimeMs = 5000,
+            int recvBufferSize = 1024) {
+
+            _handler = handler ?? throw new Exception("Handler cannot be null");
+
+            _keepAliveTimeMs = keepAliveTimeMs;
+            _recvBufferSize = recvBufferSize;
+
             _allDone = new ManualResetEvent(false);
         }
 
-        public Task Start(string hostname, int port)
+        public Task Start(string hostname, int bindPort = 9050)
         {
             _stopClient = false;
             _hostName = hostname;
-            _port = port;
+            _bindPort = bindPort;
 
             // Start our client thread
             return Task.Run(() => Connect());
@@ -51,9 +51,9 @@ namespace AsyncTcp
                 // Connect to a remote device.
                 IPHostEntry ipHostInfo = Dns.GetHostEntry(_hostName);
                 IPAddress ipAddress = ipHostInfo.AddressList[0];
-                IPEndPoint remoteEP = new IPEndPoint(ipAddress, _port);
+                IPEndPoint remoteEndpoint = new IPEndPoint(ipAddress, _bindPort);
 
-                Console.WriteLine("hostname : " + _hostName + "   ip : " + ipAddress + "   port : " + _port);
+                Console.WriteLine("hostname : " + _hostName + "   ip : " + ipAddress + "   port : " + _bindPort);
 
                 // Create a TCP/IP socket.  
                 Socket socket = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
@@ -62,11 +62,12 @@ namespace AsyncTcp
                 _allDone.Reset();
 
                 // Connect to the remote endpoint.  
-                socket.BeginConnect(remoteEP, new AsyncCallback(ConnectCallback), socket);
+                socket.BeginConnect(remoteEndpoint, new AsyncCallback(ConnectCallback), socket);
                 _allDone.WaitOne(5000);
 
                 if (_server == null)
                 {
+                    // Just return if we timeout
                     return;
                 }
 
@@ -119,14 +120,14 @@ namespace AsyncTcp
                 socket.NoDelay = true;
 
                 // Create the state object.  
-                _server = new AsyncPeer();
+                _server = new AsyncPeer(_recvBufferSize);
                 _server.socket = socket;
 
-                // Callback to AsyncHandler, should we do this on a new task?
+                // Callback to AsyncHandler
                 _handler.PeerConnected(_server);
 
                 // Begin async receiving data
-                socket.BeginReceive(_server.recvBuffer, 0, 1024, 0, new AsyncCallback(ReadCallback), _server);
+                socket.BeginReceive(_server.recvBuffer, 0, _recvBufferSize, 0, new AsyncCallback(ReadCallback), _server);
             }
             catch (Exception e)
             {
@@ -150,7 +151,7 @@ namespace AsyncTcp
                 // I believe zero reads indicate the client has disconnected gracefully
                 if (numBytes <= 0)
                 {
-                    //Console.WriteLine("EndReceived Received 0 bytes, Disconnecting : " + peer);
+                    Console.WriteLine("EndReceived Received 0 bytes, Disconnecting : " + peer);
                     Disconnect();
                 }
                 
@@ -187,7 +188,7 @@ namespace AsyncTcp
             // We have more data to read
             if (peer.dataSize < 0 || (peer.stream.Position < (peer.dataSize + 8)))
             {
-                peer.socket.BeginReceive(peer.recvBuffer, 0, 1024, 0, new AsyncCallback(ReadCallback), peer);
+                peer.socket.BeginReceive(peer.recvBuffer, 0, _recvBufferSize, 0, new AsyncCallback(ReadCallback), peer);
             }
             // We have read enough data to complete a message
             else
@@ -205,7 +206,7 @@ namespace AsyncTcp
                     // Read up to our data boundary
                     peer.stream.Read(data, 0, peer.dataSize);
                 }
-                // TODO should we handle in a new task?
+                // Call our callback
                 _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
                 // Reset our state variables
                 peer.dataType = -1;
@@ -290,7 +291,7 @@ namespace AsyncTcp
         {
             while (true)
             {
-                Thread.Sleep(_keepAliveTime);
+                Thread.Sleep(_keepAliveTimeMs);
                 if (_server == null || _server.socket == null)
                 {
                     return;
