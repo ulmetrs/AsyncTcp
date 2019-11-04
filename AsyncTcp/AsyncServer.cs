@@ -20,7 +20,6 @@ namespace AsyncTcp
         private Task _keepAlive;
 
         public List<AsyncPeer> _peers;
-        private object _peerLock;
         private bool _stopServer;
         private ManualResetEvent _allDone;
 
@@ -37,7 +36,6 @@ namespace AsyncTcp
             _debug = debug;
 
             _peers = new List<AsyncPeer>();
-            _peerLock = new object();
             _stopServer = false;
             _allDone = new ManualResetEvent(false);
         }
@@ -61,6 +59,33 @@ namespace AsyncTcp
         public void Stop()
         {
             _stopServer = true;
+        }
+
+        public void RemovePeer(AsyncPeer peer)
+        {
+            try
+            {
+                var peerRemoved = false;
+                // Remove our peer
+                lock (_peers)
+                {
+                    peerRemoved = _peers.Remove(peer);
+                }
+                // This can be called manually, which will cause our ReceiveCallback to finish when we close the socket
+                // This will enter again so don't repeat the handler
+                if (peerRemoved)
+                {
+                    _handler.PeerDisconnected(peer);
+                    // Close the socket on our end
+                    peer.socket.Shutdown(SocketShutdown.Both);
+                    peer.socket.Close();
+                }
+            }
+            catch (Exception e)
+            {
+                if (_debug)
+                    Console.WriteLine(e.ToString());
+            }
         }
 
         private void Accept()
@@ -122,7 +147,7 @@ namespace AsyncTcp
             peer.socket = handler;
 
             // Add to the list of peers
-            lock (_peerLock)
+            lock (_peers)
             {
                 _peers.Add(peer);
                 if (_debug)
@@ -293,36 +318,6 @@ namespace AsyncTcp
                 if (_debug)
                     Console.WriteLine("EndSend Error " + e.ToString() + "\nRemoving Peer : " + peer?.socket?.RemoteEndPoint);
                 RemovePeer(peer);
-            }
-        }
-
-        private void RemovePeer(AsyncPeer peer)
-        {
-            if (peer.socket == null)
-            {
-                if (_debug)
-                    Console.WriteLine("Remove Peer Called on null socket");
-                return;
-            }
-            try
-            {
-                // Callback to AsyncHandler, should we do this on a new task?
-                // If so make sure to not access socket reference
-                _handler.PeerDisconnected(peer);
-                // Close the socket on our end
-                peer.socket.Shutdown(SocketShutdown.Both);
-                peer.socket.Close();
-                peer.socket = null;
-                // Remove our peer
-                lock (_peerLock)
-                {
-                    _peers.Remove(peer);
-                }
-            }
-            catch (Exception e)
-            {
-                if (_debug)
-                    Console.WriteLine(e.ToString());
             }
         }
 
