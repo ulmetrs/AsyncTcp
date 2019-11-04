@@ -63,28 +63,38 @@ namespace AsyncTcp
 
         public void RemovePeer(AsyncPeer peer)
         {
-            try
+            var peerRemoved = false;
+            // Remove our peer
+            lock (_peers)
             {
-                var peerRemoved = false;
-                // Remove our peer
-                lock (_peers)
-                {
-                    peerRemoved = _peers.Remove(peer);
-                }
-                // This can be called manually, which will cause our ReceiveCallback to finish when we close the socket
-                // This will enter again so don't repeat the handler
-                if (peerRemoved)
+                peerRemoved = _peers.Remove(peer);
+            }
+            // This can be called manually, which will cause our ReceiveCallback to finish when we close the socket
+            // This will enter again so don't repeat the handler
+            if (peerRemoved)
+            {
+                try
                 {
                     _handler.PeerDisconnected(peer);
+                }
+                catch (Exception e)
+                {
+                    if (_debug)
+                        Console.WriteLine(e.ToString());
+                }
+                try
+                {
                     // Close the socket on our end
                     peer.socket.Shutdown(SocketShutdown.Both);
                     peer.socket.Close();
                 }
-            }
-            catch (Exception e)
-            {
-                if (_debug)
-                    Console.WriteLine(e.ToString());
+                catch (Exception e)
+                {
+                    if (_debug)
+                        Console.WriteLine(e.ToString());
+                }
+                // Set to null so we don't access disposed
+                peer.socket = null;
             }
         }
 
@@ -155,7 +165,15 @@ namespace AsyncTcp
             }
 
             // Callback to AsyncHandler
-            _handler.PeerConnected(peer);
+            try
+            {
+                _handler.PeerConnected(peer);
+            }
+            catch (Exception e)
+            {
+                if (_debug)
+                    Console.WriteLine(e.ToString());
+            }
 
             // Begin async receiving data
             handler.BeginReceive(peer.recvBuffer, 0, _recvBufferSize, 0, new AsyncCallback(ReceiveCallback), peer);
@@ -168,6 +186,9 @@ namespace AsyncTcp
 
             try
             {
+                if (peer.socket == null)
+                    return;
+
                 // Reads data from the client socket up to our recv buffer size
                 int numBytes = peer.socket.EndReceive(ar);
 
@@ -236,7 +257,15 @@ namespace AsyncTcp
                     peer.stream.Read(data, 0, peer.dataSize);
                 }
                 // Call the handler with out copied data, type, and size
-                _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
+                try
+                {
+                    _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
+                }
+                catch (Exception e)
+                {
+                    if (_debug)
+                        Console.WriteLine(e.ToString());
+                }
                 // Reset our state variables
                 peer.dataType = -1;
                 peer.dataSize = -1;
@@ -263,6 +292,7 @@ namespace AsyncTcp
                     Console.WriteLine("Error: Sending to a null socket");
                 return;
             }
+
             // Spin until we can safely send data, our keepalives and rapid sends need not conflict
             SpinWait.SpinUntil(() => peer.sendIndex == -1);
             // Set our send index
@@ -293,6 +323,9 @@ namespace AsyncTcp
 
             try
             {
+                if (peer.socket == null)
+                    return;
+
                 // Complete sending the data to the remote device.  
                 int numBytes = peer.socket.EndSend(ar);
 
