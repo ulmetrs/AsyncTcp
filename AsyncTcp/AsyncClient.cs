@@ -1,5 +1,4 @@
 ﻿using System;
-using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -7,106 +6,89 @@ using System.Threading.Tasks;
 
 namespace AsyncTcp
 {
-    public class AsyncClient
+    public class AsyncClient : AsyncBase
     {
-        private AsyncHandler _handler;
-        private int _keepAliveTimeMs;
         private int _recvBufferSize;
-        private bool _debug;
+        private int _keepAliveTimeMs;
 
         private string _hostName;
         private int _bindPort;
         private Task _keepAlive;
 
         public AsyncPeer _server;
-        private bool _stopClient;
-        private ManualResetEvent _allDone;
+        private bool _clientRunning = false;
 
         public AsyncClient(
             AsyncHandler handler,
-            int keepAliveTimeMs = 5000,
             int recvBufferSize = 1024,
-            bool debug = false) {
+            int keepAliveTimeMs = 5000) {
 
             _handler = handler ?? throw new Exception("Handler cannot be null");
-
-            _keepAliveTimeMs = keepAliveTimeMs;
             _recvBufferSize = recvBufferSize;
-            _debug = debug;
-
-            _allDone = new ManualResetEvent(false);
+            _keepAliveTimeMs = keepAliveTimeMs;
         }
 
-        public Task Start(string hostname, int bindPort = 9050)
+        public async Task Start(string hostname, int bindPort = 9050)
         {
-            _stopClient = false;
             _hostName = hostname;
             _bindPort = bindPort;
-
-            // Start our client thread
-            return Task.Run(() => Connect());
-        }
-
-        private void Connect()
-        {
+            // Connect to a remote device.
+            IPHostEntry ipHostInfo = Dns.GetHostEntry(_hostName);
+            IPAddress ipAddress = ipHostInfo.AddressList[0];
+            IPEndPoint remoteEndpoint = new IPEndPoint(ipAddress, _bindPort);
+            Console.WriteLine("hostname : " + _hostName + "   ip : " + ipAddress + "   port : " + _bindPort);
+            // Create a TCP/IP socket.  
+            Socket socket = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            // Connect
+            await socket.ConnectAsync(remoteEndpoint);
+            // Disable Nagles
+            socket.NoDelay = true;
+            // Create the peer
+            var peer = new AsyncPeer(socket, _recvBufferSize);
+            // Set server variable
+            _server = peer;
+            // Handle Peer Connected
             try
             {
-                // Connect to a remote device.
-                IPHostEntry ipHostInfo = Dns.GetHostEntry(_hostName);
-                IPAddress ipAddress = ipHostInfo.AddressList[0];
-                IPEndPoint remoteEndpoint = new IPEndPoint(ipAddress, _bindPort);
-
-                Console.WriteLine("hostname : " + _hostName + "   ip : " + ipAddress + "   port : " + _bindPort);
-
-                // Create a TCP/IP socket.  
-                Socket socket = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-
-                // Set the event to nonsignaled state.  
-                _allDone.Reset();
-
-                // Connect to the remote endpoint.  
-                socket.BeginConnect(remoteEndpoint, new AsyncCallback(ConnectCallback), socket);
-                _allDone.WaitOne(5000);
-
-                if (_server == null)
+                await _handler.PeerConnected(peer); // Test configure await here
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.ToString());
+            }
+            // Set client running
+            _clientRunning = true;
+            // Start our keep-alive thread
+            _keepAlive = Task.Run(KeepAlive);
+            // Dedicated buffer for async reads
+            var buffer = new byte[_recvBufferSize];
+            var segment = new ArraySegment<byte>(buffer, 0, _recvBufferSize);
+            // Use the TaskExtensions for await receive
+            int bytesRead;
+            try
+            {
+                while (_clientRunning && (bytesRead = await socket.ReceiveAsync(segment, 0)) > 0)
                 {
-                    // Just return if we timeout
-                    return;
-                }
-
-                /// Start our keep-alive thread
-                _keepAlive = Task.Run(() => KeepAlive());
-
-                while (true)
-                {
-                    if (_stopClient)
-                    {
-                        Task.WaitAll(_keepAlive);
-                        return;
-                    }
-                    Thread.Sleep(3000);
+                    // Write our buffer bytes to the peer's message stream
+                    peer.stream.Write(buffer, 0, bytesRead);
+                    // Parse the bytes that we do have, could be an entire message, a partial message split because of tcp, or partial message split because of buffer size
+                    await ParseReceive(peer);
                 }
             }
             catch (Exception e)
             {
-                Console.WriteLine("CONNECT ERROR " + e.ToString());
+                Console.WriteLine("Receive Error: " + e.ToString());
             }
+            // We stopped receiving bytes, meaning we disconnected
+            await Disconnect();
+            // Wait for keep alive to finish
+            Task.WaitAll(_keepAlive);
         }
 
-        public void Disconnect()
+        public async Task Disconnect()
         {
             if (_server != null)
             {
-                // Callback to AsyncHandler
-                try
-                {
-                    _handler.PeerDisconnected(_server);
-                }
-                catch (Exception e)
-                {
-                    if (_debug)
-                        Console.WriteLine(e.ToString());
-                }
                 try
                 {
                     _server.socket.Shutdown(SocketShutdown.Both);
@@ -114,229 +96,27 @@ namespace AsyncTcp
                 }
                 catch (Exception e)
                 {
-                    if (_debug)
-                        Console.WriteLine(e.ToString());
+                    Console.WriteLine(e.ToString());
                 }
-                _server.socket = null;
-                _server = null;
-            }
-            
-            _stopClient = true;
-        }
-
-        private void ConnectCallback(IAsyncResult ar)
-        {
-            try
-            {
-                // Retrieve the socket from the state object.  
-                Socket socket = (Socket)ar.AsyncState;
-
-                // Complete the connection.  
-                socket.EndConnect(ar);
-                socket.NoDelay = true;
-
-                // Create the state object.  
-                _server = new AsyncPeer(_recvBufferSize);
-                _server.socket = socket;
-
-                // Callback to AsyncHandler
                 try
                 {
-                    _handler.PeerConnected(_server);
+                    await _handler.PeerDisconnected(_server);
                 }
                 catch (Exception e)
                 {
-                    if (_debug)
-                        Console.WriteLine(e.ToString());
+                    Console.WriteLine(e.ToString());
                 }
-
-                // Begin async receiving data
-                socket.BeginReceive(_server.recvBuffer, 0, _recvBufferSize, 0, new AsyncCallback(ReceiveCallback), _server);
+                _server = null;
             }
-            catch (Exception e)
-            {
-                Console.WriteLine("CONNECT CALLBACK ERROR " + e.ToString());
-            }
-
-            // Signal callback has finished 
-            _allDone.Set();
+            _clientRunning = false;
         }
 
-        private void ReceiveCallback(IAsyncResult ar)
+        private async Task KeepAlive()
         {
-            // Retrieve the state object
-            AsyncPeer peer = (AsyncPeer)ar.AsyncState;
-
-            try
-            {
-                if (peer.socket == null)
-                    return;
-
-                // Read data from the client socket.   
-                int numBytes = peer.socket.EndReceive(ar);
-
-                // I believe zero reads indicate the client has disconnected gracefully
-                if (numBytes <= 0)
-                {
-                    if (_debug)
-                        Console.WriteLine("EndReceived Received 0 bytes, Disconnecting : " + peer);
-                    Disconnect();
-                    return;
-                }
-                
-                // Add the read bytes to the current stream
-                peer.stream.Write(peer.recvBuffer, 0, numBytes);
-
-                ParseRead(peer);
-            }
-            catch (Exception e)
-            {
-                if (_debug)
-                    Console.WriteLine("EndReceive Error : " + e.ToString() + "\nDisconnecting Peer: " + peer);
-                Disconnect();
-            }
-        }
-
-        private void ParseRead(AsyncPeer peer)
-        {
-
-            // We have not yet read our message header (data type and size) but have enough bytes to
-            if (peer.dataSize < 0 && peer.stream.Position >= 8)
-            {
-                // Store our write position
-                long writePos = peer.stream.Position;
-                // Seek to the beginning of our data type
-                peer.stream.Seek(0, SeekOrigin.Begin);
-                // Read the data type and size ints
-                BinaryReader reader = new BinaryReader(peer.stream); // We don't want to close the stream, so no 'using' statement
-                peer.dataType = reader.ReadInt32();
-                peer.dataSize = reader.ReadInt32();
-                // Seek back to our current write position
-                peer.stream.Seek(writePos, SeekOrigin.Begin);
-            }
-
-            // We have more data to read
-            if (peer.dataSize < 0 || (peer.stream.Position < (peer.dataSize + 8)))
-            {
-                peer.socket.BeginReceive(peer.recvBuffer, 0, _recvBufferSize, 0, new AsyncCallback(ReceiveCallback), peer);
-            }
-            // We have read enough data to complete a message
-            else
-            {
-                byte[] data = null;
-                // If we actually have a payload
-                if (peer.dataSize > 0)
-                {
-                    // Store our write position
-                    long pos = peer.stream.Position;
-                    // Seek to the beginning of our data (byte 8)
-                    peer.stream.Seek(8, SeekOrigin.Begin);
-                    // Create a data-sized array for our callback
-                    data = new byte[peer.dataSize];
-                    // Read up to our data boundary
-                    peer.stream.Read(data, 0, peer.dataSize);
-                }
-                // Call our callback
-                try
-                {
-                    _handler.DataReceived(peer, peer.dataType, peer.dataSize, data);
-                }
-                catch(Exception e)
-                {
-                    if (_debug)
-                        Console.WriteLine(e.ToString());
-                }
-                // Reset our state variables
-                peer.dataType = -1;
-                peer.dataSize = -1;
-                // Create a new stream
-                MemoryStream newStream = new MemoryStream();
-                // Copy all remaining data to the new stream
-                peer.stream.CopyTo(newStream);
-                // Dispose our old stream
-                peer.stream.Dispose();
-                // Set the peer's stream to the new stream
-                peer.stream = newStream;
-                // Parse the new stream, our stream may have contained multiple messages
-                ParseRead(peer);
-            }
-        }
-
-        public void Send(int dataType, int dataSize, byte[] data)
-        {
-            if (_server == null || _server.socket == null)
-                return;
-
-            // Spin until we can safely send data (We have a polling mechanism sending keepalive messages)
-            SpinWait.SpinUntil(() => _server.sendIndex == -1);
-            // Set our send index
-            _server.sendIndex = 0;
-            // Set our state buffer
-            _server.sendBuffer = new byte[dataSize + 8];
-            using (MemoryStream stream = new MemoryStream(_server.sendBuffer))
-            {
-                using (BinaryWriter writer = new BinaryWriter(stream))
-                {
-                    writer.Write(dataType);
-                    writer.Write(dataSize);
-                    // We have no data in keep alive packets
-                    if (data != null)
-                    {
-                        writer.Write(data, 0, dataSize);
-                    }
-                }
-            }
-            // Begin sending the data to the remote device.  
-            _server.socket.BeginSend(_server.sendBuffer, 0, _server.sendBuffer.Length, 0, new AsyncCallback(SendCallback), _server);
-        }
-
-        private void SendCallback(IAsyncResult ar)
-        {
-            // Retrieve the peer state object
-            AsyncPeer peer = (AsyncPeer)ar.AsyncState;
-
-            try
-            {
-                if (peer.socket == null)
-                    return;
-
-                // Complete sending the data to the remote device.  
-                int numBytes = peer.socket.EndSend(ar);
-
-                // Increment our send index
-                peer.sendIndex += numBytes;
-                // We are not done sending message
-                if (peer.sendIndex < peer.sendBuffer.Length)
-                {
-                    // Begin sending the data to the remote device.  
-                    peer.socket.BeginSend(peer.sendBuffer, peer.sendIndex, (peer.sendBuffer.Length - peer.sendIndex), 0, new AsyncCallback(SendCallback), peer);
-                }
-                else
-                {
-                    // Remove our send buffer
-                    peer.sendBuffer = null;
-                    // Reset our send index
-                    peer.sendIndex = -1;
-                }
-            }
-            catch (Exception e)
-            {
-                if (_debug)
-                    Console.WriteLine("SEND CALLBACK ERROR " + e.ToString() + "\nDisconnecting Peer " + peer);
-                Disconnect();
-            }
-        }
-
-        private void KeepAlive()
-        {
-            while (true)
+            while (_clientRunning)
             {
                 Thread.Sleep(_keepAliveTimeMs);
-                if (_server == null || _server.socket == null)
-                {
-                    return;
-                }
-                Send(0, 0, null);
+                await Send(_server, 0, 0, null);
             }
         }
     }

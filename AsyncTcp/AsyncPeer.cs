@@ -1,25 +1,22 @@
 ﻿using System.IO;
 using System.Net.Sockets;
+using System.Threading;
 
 namespace AsyncTcp
 {
    public class AsyncPeer
     {
-        // Client socket.  
         public Socket socket;
-        // Receive buffer
-        public byte[] recvBuffer;
-        // Receive state vars
+        public MemoryStream stream;
+        public SemaphoreSlim sendLock;
         public int dataType = -1;
         public int dataSize = -1;
-        public MemoryStream stream;
-        // Send state vars
-        public byte[] sendBuffer = null;
-        public int sendIndex = -1;
-        public AsyncPeer(int recvBufferSize)
+
+        public AsyncPeer(Socket sock, int recvBufferSize)
         {
-            recvBuffer = new byte[recvBufferSize];
+            socket = sock;
             stream = new MemoryStream();
+            sendLock = new SemaphoreSlim(1, 1);
         }
     }
 }
