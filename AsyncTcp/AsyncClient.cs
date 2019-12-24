@@ -35,8 +35,10 @@ namespace AsyncTcp
             // Connect to a remote device.
             IPHostEntry ipHostInfo = Dns.GetHostEntry(_hostName);
             IPAddress ipAddress = ipHostInfo.AddressList[0];
-            IPEndPoint remoteEndpoint = new IPEndPoint(ipAddress, _bindPort);
+
             Console.WriteLine("hostname : " + _hostName + "   ip : " + ipAddress + "   port : " + _bindPort);
+            // Establish the remote endpoint for the socket.
+            IPEndPoint remoteEndpoint = new IPEndPoint(ipAddress, _bindPort);
             // Create a TCP/IP socket.  
             Socket socket = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
             // Connect
@@ -70,7 +72,7 @@ namespace AsyncTcp
                 while (_clientRunning && (bytesRead = await socket.ReceiveAsync(segment, 0)) > 0)
                 {
                     // Write our buffer bytes to the peer's message stream
-                    peer.stream.Write(buffer, 0, bytesRead);
+                    peer.Stream.Write(buffer, 0, bytesRead);
                     // Parse the bytes that we do have, could be an entire message, a partial message split because of tcp, or partial message split because of buffer size
                     await ParseReceive(peer);
                 }
@@ -80,24 +82,32 @@ namespace AsyncTcp
                 Console.WriteLine("Receive Error: " + e.ToString());
             }
             // We stopped receiving bytes, meaning we disconnected
-            await Disconnect();
+            await RemovePeer();
             // Wait for keep alive to finish
             Task.WaitAll(_keepAlive);
         }
 
-        public async Task Disconnect()
+        public void Stop()
+        {
+            // FIXME Im not sure the peer loop will exit properly, check this
+            _clientRunning = false;
+        }
+
+        private async Task RemovePeer()
         {
             if (_server != null)
             {
+                // Close the socket on our end
                 try
                 {
-                    _server.socket.Shutdown(SocketShutdown.Both);
-                    _server.socket.Close();
+                    _server.Socket.Shutdown(SocketShutdown.Both);
+                    _server.Socket.Close();
                 }
                 catch (Exception e)
                 {
                     Console.WriteLine(e.ToString());
                 }
+                // Handler Callback for peer disconnected
                 try
                 {
                     await _handler.PeerDisconnected(_server);
@@ -106,9 +116,8 @@ namespace AsyncTcp
                 {
                     Console.WriteLine(e.ToString());
                 }
-                _server = null;
             }
-            _clientRunning = false;
+            _server = null;
         }
 
         public Task Send(int dataType, int dataSize, byte[] data)

@@ -38,35 +38,39 @@ namespace AsyncTcp
                 _ipAddress = ipHostInfo.AddressList[0];
             }
             _bindPort = bindPort;
+
             Console.WriteLine("Hostname : " + Dns.GetHostName() + "   ip : " + _ipAddress + "   port : " + _bindPort);
-            // Establish the local endpoint for the socket.  
+            // Establish the local endpoint for the socket.
             IPEndPoint localEndPoint = new IPEndPoint(_ipAddress, _bindPort);
             // Create a TCP/IP socket.  
             Socket listener = new Socket(_ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
             // Bind the socket to the local endpoint and listen for incoming connections.
             listener.Bind(localEndPoint);
             listener.Listen(100);
+
             // Set server running
             _serverRunning = true;
+
             // Start our keep-alive thread
             _keepAlive = Task.Run(KeepAlive);
-            // Accept all connections
+
+            // Accept all connections while server running
             while (_serverRunning)
             {
-                // Check and make sure this accepts multiple connections
-                using (Socket handler = await listener.AcceptAsync())
+                // Handle each accepted socket
+                using (Socket socket = await listener.AcceptAsync())
                 {
                     // Disable Nagles
-                    handler.NoDelay = true;
+                    socket.NoDelay = true;
                     // Create the peer
-                    var peer = new AsyncPeer(handler, _recvBufferSize);
-                    // Add to the list of peers
+                    var peer = new AsyncPeer(socket, _recvBufferSize);
+                    // Add to the list of peers for keep-alive messaging
                     lock (_peers)
                     {
                         _peers.Add(peer);
                     }
                     Console.WriteLine("Added to peer list, New num peers : " + _peers.Count);
-                    // Handle Peer Connected
+                    // Handler Callback for peer connected
                     try
                     {
                         await _handler.PeerConnected(peer);
@@ -82,10 +86,11 @@ namespace AsyncTcp
                     int bytesRead;
                     try
                     {
-                        while (_serverRunning && (bytesRead = await handler.ReceiveAsync(segment, 0)) > 0)
+                        // Keep Receving Bytes, Stop if server or stopped or peer inactive (Check if this gracefully closes!)
+                        while (_serverRunning && peer.Active && (bytesRead = await peer.Socket.ReceiveAsync(segment, 0)) > 0) 
                         {
                             // Write our buffer bytes to the peer's message stream
-                            peer.stream.Write(buffer, 0, bytesRead);
+                            peer.Stream.Write(buffer, 0, bytesRead);
                             // Parse the bytes that we do have, could be an entire message, a partial message split because of tcp, or partial message split because of buffer size
                             await ParseReceive(peer);
                         }
@@ -108,7 +113,13 @@ namespace AsyncTcp
             _serverRunning = false;
         }
 
-        public async Task RemovePeer(AsyncPeer peer)
+        public void Shutdown(AsyncPeer peer)
+        {
+            // FIXME Im not sure the peer loop will exit properly, check this
+            peer.Active = false;
+        }
+
+        private async Task RemovePeer(AsyncPeer peer)
         {
             bool removed = false;
             lock (_peers)
@@ -117,16 +128,17 @@ namespace AsyncTcp
             }
             if (removed)
             {
+                // Close the socket on our end
                 try
                 {
-                    // Close the socket on our end
-                    peer.socket.Shutdown(SocketShutdown.Both);
-                    peer.socket.Close();
+                    peer.Socket.Shutdown(SocketShutdown.Both);
+                    peer.Socket.Close();
                 }
                 catch (Exception e)
                 {
                     Console.WriteLine(e.ToString());
                 }
+                // Handler Callback for peer disconnected
                 try
                 {
                     await _handler.PeerDisconnected(peer);

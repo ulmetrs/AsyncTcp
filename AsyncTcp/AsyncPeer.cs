@@ -6,17 +6,18 @@ namespace AsyncTcp
 {
    public class AsyncPeer
     {
-        public Socket socket;
-        public MemoryStream stream;
-        public SemaphoreSlim sendLock;
-        public int dataType = -1;
-        public int dataSize = -1;
+        public Socket Socket;
+        public MemoryStream Stream;
+        public SemaphoreSlim SendLock;
+        public int DataType = -1;
+        public int DataSize = -1;
+        public bool Active = true;
 
         public AsyncPeer(Socket sock, int recvBufferSize)
         {
-            socket = sock;
-            stream = new MemoryStream();
-            sendLock = new SemaphoreSlim(1, 1);
+            Socket = sock;
+            Stream = new MemoryStream();
+            SendLock = new SemaphoreSlim(1, 1);
         }
     }
 }
