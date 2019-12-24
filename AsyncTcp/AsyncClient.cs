@@ -111,6 +111,11 @@ namespace AsyncTcp
             _clientRunning = false;
         }
 
+        public Task Send(int dataType, int dataSize, byte[] data)
+        {
+            return Send(_server, dataType, dataSize, data);
+        }
+
         private async Task KeepAlive()
         {
             while (_clientRunning)
