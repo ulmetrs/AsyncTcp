@@ -14,7 +14,6 @@ namespace AsyncTcp
 
         private IPAddress _ipAddress;
         private int _bindPort;
-        private Task _keepAlive;
 
         private readonly List<AsyncPeer> _peers = new List<AsyncPeer>();
         private bool _serverRunning = false;
@@ -51,60 +50,65 @@ namespace AsyncTcp
 
             // Set server running
             _serverRunning = true;
+            // Create a list of tasks
+            var tasks = new List<Task>();
+            // HUGE NOTE/DISCLAIMER: All Async Methods are run Synchronously until the first await,
+            //  meaning we cant just do this first: tasks.Add(KeepAlive());
 
-            // Start our keep-alive thread
-            _keepAlive = Task.Run(KeepAlive);
-
+            // Add our Keep Alive Task
+            tasks.Add(Task.Run(KeepAlive));
             // Accept all connections while server running
             while (_serverRunning)
             {
-                // Handle each accepted socket
-                using (Socket socket = await listener.AcceptAsync())
+                // TODO/FIXME figure out a cleanup mechanism for tasks outside of the accept loop, is this necessary, memory leak?
+                tasks.Add(ProcessSocket(await listener.AcceptAsync().ConfigureAwait(false)));
+            }
+            // Wait for all tasks to finish
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+
+        private async Task ProcessSocket(Socket socket)
+        {
+            // Disable Nagles
+            socket.NoDelay = true;
+            // Create the peer
+            var peer = new AsyncPeer(socket, _recvBufferSize);
+            // Add to the list of peers for keep-alive messaging
+            lock (_peers)
+            {
+                _peers.Add(peer);
+            }
+            // Handler Callback for peer connected
+            try
+            {
+                await _handler.PeerConnected(peer).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("Peer Connected Error: " + e.ToString());
+            }
+            // Dedicated buffer for async reads
+            var buffer = new byte[_recvBufferSize];
+            var segment = new ArraySegment<byte>(buffer, 0, _recvBufferSize);
+            // Use the TaskExtensions for await receive
+            int bytesRead;
+            try
+            {
+                // Keep Receving Bytes, Stop if server or stopped or peer inactive (Check if this gracefully closes!)
+                while (_serverRunning && peer.Active && (bytesRead = await peer.Socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
                 {
-                    // Disable Nagles
-                    socket.NoDelay = true;
-                    // Create the peer
-                    var peer = new AsyncPeer(socket, _recvBufferSize);
-                    // Add to the list of peers for keep-alive messaging
-                    lock (_peers)
-                    {
-                        _peers.Add(peer);
-                    }
-                    // Handler Callback for peer connected
-                    try
-                    {
-                        await _handler.PeerConnected(peer).ConfigureAwait(false);
-                    }
-                    catch (Exception e)
-                    {
-                        Console.WriteLine(e.ToString());
-                    }
-                    // Dedicated buffer for async reads
-                    var buffer = new byte[_recvBufferSize];
-                    var segment = new ArraySegment<byte>(buffer, 0, _recvBufferSize);
-                    // Use the TaskExtensions for await receive
-                    int bytesRead;
-                    try
-                    {
-                        // Keep Receving Bytes, Stop if server or stopped or peer inactive (Check if this gracefully closes!)
-                        while (_serverRunning && peer.Active && (bytesRead = await peer.Socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
-                        {
-                            // Write our buffer bytes to the peer's message stream
-                            peer.Stream.Write(buffer, 0, bytesRead);
-                            // Parse the bytes that we do have, could be an entire message, a partial message split because of tcp, or partial message split because of buffer size
-                            await ParseReceive(peer).ConfigureAwait(false);
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        Console.WriteLine("Receive Error: " + e.ToString());
-                    }
-                    // We stopped receiving bytes, meaning we disconnected.  Remove the Peer.
-                    await RemovePeer(peer).ConfigureAwait(false);
+                    // Write our buffer bytes to the peer's message stream
+                    peer.Stream.Write(buffer, 0, bytesRead);
+                    // Parse the bytes that we do have, could be an entire message, a partial message split because of tcp, or partial message split because of buffer size
+                    await ParseReceive(peer).ConfigureAwait(false);
                 }
             }
-            // Wait for keep alive to finish
-            Task.WaitAll(_keepAlive);
+            catch (Exception e)
+            {
+                Console.WriteLine("Receive Error: " + e.ToString());
+            }
+            // We stopped receiving bytes, meaning we disconnected.  Remove the Peer.
+            await RemovePeer(peer).ConfigureAwait(false);
         }
 
         public void Stop()
