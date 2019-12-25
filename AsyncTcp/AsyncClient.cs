@@ -9,7 +9,7 @@ namespace AsyncTcp
     public class AsyncClient : AsyncBase
     {
         private int _recvBufferSize;
-        private int _keepAliveTimeMs;
+        private int _keepAliveInterval;
 
         private string _hostName;
         private int _bindPort;
@@ -21,11 +21,16 @@ namespace AsyncTcp
         public AsyncClient(
             AsyncHandler handler,
             int recvBufferSize = 1024,
-            int keepAliveTimeMs = 5000) {
+            int keepAliveInterval = 10) {
 
             _handler = handler ?? throw new Exception("Handler cannot be null");
             _recvBufferSize = recvBufferSize;
-            _keepAliveTimeMs = keepAliveTimeMs;
+            _keepAliveInterval = keepAliveInterval;
+        }
+
+        public Task Send(int dataType, int dataSize, byte[] data)
+        {
+            return Send(_server, dataType, dataSize, data);
         }
 
         public async Task Start(string hostname, int bindPort = 9050)
@@ -52,7 +57,7 @@ namespace AsyncTcp
             // Handle Peer Connected
             try
             {
-                await _handler.PeerConnected(peer); // Test configure await here
+                await _handler.PeerConnected(peer).ConfigureAwait(false);
             }
             catch (Exception e)
             {
@@ -69,12 +74,12 @@ namespace AsyncTcp
             int bytesRead;
             try
             {
-                while (_clientRunning && (bytesRead = await socket.ReceiveAsync(segment, 0)) > 0)
+                while (_clientRunning && (bytesRead = await socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
                 {
                     // Write our buffer bytes to the peer's message stream
                     peer.Stream.Write(buffer, 0, bytesRead);
                     // Parse the bytes that we do have, could be an entire message, a partial message split because of tcp, or partial message split because of buffer size
-                    await ParseReceive(peer);
+                    await ParseReceive(peer).ConfigureAwait(false);
                 }
             }
             catch (Exception e)
@@ -82,14 +87,13 @@ namespace AsyncTcp
                 Console.WriteLine("Receive Error: " + e.ToString());
             }
             // We stopped receiving bytes, meaning we disconnected
-            await RemovePeer();
+            await RemovePeer().ConfigureAwait(false);
             // Wait for keep alive to finish
             Task.WaitAll(_keepAlive);
         }
 
         public void Stop()
         {
-            // FIXME Im not sure the peer loop will exit properly, check this
             _clientRunning = false;
         }
 
@@ -100,6 +104,7 @@ namespace AsyncTcp
                 // Close the socket on our end
                 try
                 {
+                    await _server.SendLock.WaitAsync().ConfigureAwait(false);
                     _server.Socket.Shutdown(SocketShutdown.Both);
                     _server.Socket.Close();
                 }
@@ -107,10 +112,14 @@ namespace AsyncTcp
                 {
                     Console.WriteLine(e.ToString());
                 }
+                finally
+                {
+                    _server.SendLock.Release();
+                }
                 // Handler Callback for peer disconnected
                 try
                 {
-                    await _handler.PeerDisconnected(_server);
+                    await _handler.PeerDisconnected(_server).ConfigureAwait(false);
                 }
                 catch (Exception e)
                 {
@@ -120,17 +129,23 @@ namespace AsyncTcp
             _server = null;
         }
 
-        public Task Send(int dataType, int dataSize, byte[] data)
-        {
-            return Send(_server, dataType, dataSize, data);
-        }
-
         private async Task KeepAlive()
         {
+            int count = _keepAliveInterval;
             while (_clientRunning)
             {
-                Thread.Sleep(_keepAliveTimeMs);
-                await Send(_server, 0, 0, null);
+                // Send Keep Alives every interval
+                if (count == _keepAliveInterval)
+                {
+                    await SendKeepAlive(_server).ConfigureAwait(false);
+                    count = 0;
+                }
+                else
+                {
+                    count++;
+                }
+                // Check every second for exit
+                Thread.Sleep(1000);
             }
         }
     }

@@ -10,7 +10,7 @@ namespace AsyncTcp
     public class AsyncServer : AsyncBase
     {
         private int _recvBufferSize;
-        private int _keepAliveTimeMs;
+        private int _keepAliveInterval;
 
         private IPAddress _ipAddress;
         private int _bindPort;
@@ -22,11 +22,12 @@ namespace AsyncTcp
         public AsyncServer(
             AsyncHandler handler,
             int recvBufferSize = 1024,
-            int keepAliveTimeMs = 5000) {
+            int keepAliveInterval = 10)
+        {
 
             _handler = handler ?? throw new Exception("Handler cannot be null");
             _recvBufferSize = recvBufferSize;
-            _keepAliveTimeMs = keepAliveTimeMs;
+            _keepAliveInterval = keepAliveInterval;
         }
 
         public async Task Start(IPAddress ipAddress = null, int bindPort = 9050)
@@ -69,11 +70,10 @@ namespace AsyncTcp
                     {
                         _peers.Add(peer);
                     }
-                    Console.WriteLine("Added to peer list, New num peers : " + _peers.Count);
                     // Handler Callback for peer connected
                     try
                     {
-                        await _handler.PeerConnected(peer);
+                        await _handler.PeerConnected(peer).ConfigureAwait(false);
                     }
                     catch (Exception e)
                     {
@@ -87,20 +87,20 @@ namespace AsyncTcp
                     try
                     {
                         // Keep Receving Bytes, Stop if server or stopped or peer inactive (Check if this gracefully closes!)
-                        while (_serverRunning && peer.Active && (bytesRead = await peer.Socket.ReceiveAsync(segment, 0)) > 0) 
+                        while (_serverRunning && peer.Active && (bytesRead = await peer.Socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
                         {
                             // Write our buffer bytes to the peer's message stream
                             peer.Stream.Write(buffer, 0, bytesRead);
                             // Parse the bytes that we do have, could be an entire message, a partial message split because of tcp, or partial message split because of buffer size
-                            await ParseReceive(peer);
+                            await ParseReceive(peer).ConfigureAwait(false);
                         }
                     }
-                    catch(Exception e)
+                    catch (Exception e)
                     {
                         Console.WriteLine("Receive Error: " + e.ToString());
                     }
                     // We stopped receiving bytes, meaning we disconnected.  Remove the Peer.
-                    await RemovePeer(peer);
+                    await RemovePeer(peer).ConfigureAwait(false);
                 }
             }
             // Wait for keep alive to finish
@@ -131,6 +131,7 @@ namespace AsyncTcp
                 // Close the socket on our end
                 try
                 {
+                    await peer.SendLock.WaitAsync().ConfigureAwait(false);
                     peer.Socket.Shutdown(SocketShutdown.Both);
                     peer.Socket.Close();
                 }
@@ -138,10 +139,14 @@ namespace AsyncTcp
                 {
                     Console.WriteLine(e.ToString());
                 }
+                finally
+                {
+                    peer.SendLock.Release();
+                }
                 // Handler Callback for peer disconnected
                 try
                 {
-                    await _handler.PeerDisconnected(peer);
+                    await _handler.PeerDisconnected(peer).ConfigureAwait(false);
                 }
                 catch (Exception e)
                 {
@@ -152,20 +157,35 @@ namespace AsyncTcp
 
         private async Task KeepAlive()
         {
+            int count = _keepAliveInterval;
             while (_serverRunning)
             {
-                Thread.Sleep(_keepAliveTimeMs);
-                // Lock and duplicate our peers list
-                List<AsyncPeer> copy;
-                lock (_peers)
+                // Send Keep Alives every interval
+                if (count == _keepAliveInterval)
                 {
-                    copy = new List<AsyncPeer>(_peers);
+                    count = 0;
+
+                    if (_peers.Count == 0)
+                        continue;
+
+                    // Lock and duplicate our peers list
+                    List<AsyncPeer> copy;
+                    lock (_peers)
+                    {
+                        copy = new List<AsyncPeer>(_peers);
+                    }
+                    // Iterate over our copy and send keep-alive messages
+                    foreach (AsyncPeer peer in copy)
+                    {
+                        await SendKeepAlive(peer).ConfigureAwait(false);
+                    }
                 }
-                // Iterate over our copy and send keep-alive messages
-                foreach (AsyncPeer peer in copy)
+                else
                 {
-                    await Send(peer, 0, 0, null);
+                    count++;
                 }
+                // Check every second for exit
+                Thread.Sleep(1000);
             }
         }
     }

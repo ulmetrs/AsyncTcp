@@ -10,15 +10,19 @@ namespace AsyncTcp
     {
         protected AsyncHandler _handler;
 
+        private readonly byte[] kaBytes = new byte[8];
+
         // Right now we are doing double allocations on the server anyway when we serialize the object, then copy it into this
         // Stream. If we want to optimize sends with an ArrayPool then we need to optimize both sides
         // Send a message to the remote peer
         public async Task Send(AsyncPeer peer, int dataType, int dataSize, byte[] data)
         {
+            //_logger.LogInformation("Begining Send, Type : " + dataType + " - Size : " + dataSize);
             // Calc total size of the send bytes
             var totalSize = dataSize + 8;
             // Rent a buffer
             var buffer = ArrayPool<byte>.Shared.Rent(totalSize);
+            //var buffer = new byte[totalSize];
 
             try
             {
@@ -38,15 +42,15 @@ namespace AsyncTcp
                 }
 
                 // Lock our sendasync to ensure message bytes are contiguous
-                await peer.SendLock.WaitAsync();
+                await peer.SendLock.WaitAsync().ConfigureAwait(false);
                 // Keep sending bytes until done
                 var offset = 0;
                 while (offset < totalSize)
                 {
-                    offset += await peer.Socket.SendAsync(new ArraySegment<byte>(buffer, offset, totalSize - offset), 0);
+                    offset += await peer.Socket.SendAsync(new ArraySegment<byte>(buffer, offset, totalSize - offset), 0).ConfigureAwait(false);
                 }
             }
-            catch(Exception e)
+            catch (Exception e)
             {
                 Console.WriteLine("Send Exception: " + e.ToString());
             }
@@ -103,11 +107,11 @@ namespace AsyncTcp
                 // Call the handler with our copied data, type, and size
                 try
                 {
-                    await _handler.DataReceived(peer, peer.DataType, peer.DataSize, data);
+                    await _handler.DataReceived(peer, peer.DataType, peer.DataSize, data).ConfigureAwait(false);
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine(e.ToString());
+                    Console.WriteLine("ParseReceive Exception: " + e.ToString());
                 }
                 // Reset our state variables
                 peer.DataType = -1;
@@ -121,7 +125,31 @@ namespace AsyncTcp
                 // Set the peer's stream to the new stream
                 peer.Stream = newStream;
                 // Parse the new stream, our stream may have contained multiple messages
-                await ParseReceive(peer);
+                await ParseReceive(peer).ConfigureAwait(false);
+            }
+        }
+
+        protected async Task SendKeepAlive(AsyncPeer peer)
+        {
+            try
+            {
+                // Lock our sendasync to ensure message bytes are contiguous
+                await peer.SendLock.WaitAsync().ConfigureAwait(false);
+                // Keep sending bytes until done
+                var offset = 0;
+                while (offset < 8)
+                {
+                    offset += await peer.Socket.SendAsync(new ArraySegment<byte>(kaBytes, offset, 8 - offset), 0).ConfigureAwait(false);
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("SendKeepAlive Exception: " + e.ToString());
+            }
+            finally
+            {
+                // Unlock to allow other sends
+                peer.SendLock.Release();
             }
         }
     }
