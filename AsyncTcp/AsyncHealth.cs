@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 namespace AsyncTcp
 {
     // Health Check Server that just accepts connections and closes them
+    // AWS Network LB Requires this behaviour to register targets
     public class AsyncHealth
     {
         private IPAddress _ipAddress;
@@ -28,7 +29,7 @@ namespace AsyncTcp
                 _ipAddress = ipHostInfo.AddressList[0];
             }
             _bindPort = bindPort;
-            Console.WriteLine("hostname : " + Dns.GetHostName() + "   ip : " + _ipAddress + "   port : " + _bindPort);
+            Console.WriteLine("Hostname : " + Dns.GetHostName() + "   ip : " + _ipAddress + "   port : " + _bindPort);
             // Establish the local endpoint for the socket.  
             IPEndPoint localEndPoint = new IPEndPoint(_ipAddress, _bindPort);
             // Create a TCP/IP socket.  
@@ -36,16 +37,17 @@ namespace AsyncTcp
             // Bind the socket to the local endpoint and listen for incoming connections.
             listener.Bind(localEndPoint);
             listener.Listen(100);
-            Socket socket;
+            
             // Set server running
             _serverRunning = true;
+
+            Socket socket;
             while (_serverRunning)
             {
                 Thread.Sleep(1000);
-                socket = await listener.AcceptAsync();
+                socket = await listener.AcceptAsync().ConfigureAwait(false);
                 socket.Shutdown(SocketShutdown.Both);
                 socket.Close();
-                socket = null;
             }
         }
 
