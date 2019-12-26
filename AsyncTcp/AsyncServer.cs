@@ -11,6 +11,7 @@ namespace AsyncTcp
     {
         private int _recvBufferSize;
         private int _keepAliveInterval;
+        private int _taskCleanupInterval = 100;
 
         private IPAddress _ipAddress;
         private int _bindPort;
@@ -54,16 +55,36 @@ namespace AsyncTcp
             var tasks = new List<Task>();
             // HUGE NOTE/DISCLAIMER: All Async Methods are run Synchronously until the first await,
             //  meaning we cant just do this first: tasks.Add(KeepAlive());
-
             // Add our Keep Alive Task
             tasks.Add(Task.Run(KeepAlive));
+            // Count our tasks added
+            var taskCount = 0;
+            Socket socket;
             // Accept all connections while server running
             while (_serverRunning)
             {
-                // TODO/FIXME figure out a cleanup mechanism for tasks outside of the accept loop, is this necessary, memory leak?
-                tasks.Add(ProcessSocket(await listener.AcceptAsync().ConfigureAwait(false)));
+                // Cleanup our tasks list, server can be long running so we don't wan't to append tasks forever
+                if (taskCount >= _taskCleanupInterval)
+                {
+                    taskCount = 0;
+                    var newTasks = new List<Task>();
+                    for (int i = 0; i < tasks.Count; i++)
+                    {
+                        if (!tasks[i].IsCompleted)
+                        {
+                            newTasks.Add(tasks[i]);
+                        }
+                    }
+                    tasks = newTasks;
+                }
+                // Synchronously await Accepts
+                socket = await listener.AcceptAsync().ConfigureAwait(false);
+                // Add Async Task Process Socket, this task will handle the new connection until it closes
+                tasks.Add(ProcessSocket(socket));
+                // Increment task count so we know when to run our task cleanup again
+                taskCount++;
             }
-            // Wait for all tasks to finish
+            // Wait for all remaining tasks to finish
             await Task.WhenAll(tasks).ConfigureAwait(false);
         }
 
@@ -94,7 +115,7 @@ namespace AsyncTcp
             int bytesRead;
             try
             {
-                // Keep Receving Bytes, Stop if server or stopped or peer inactive (Check if this gracefully closes!)
+                // Loop Receive, Stopping when Server Stopped, Peer Shutdown, bytesRead = 0 (Client Graceful Shutdown), or Exception (Client Ungraceful Disconnect)
                 while (_serverRunning && peer.Active && (bytesRead = await peer.Socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
                 {
                     // Write our buffer bytes to the peer's message stream
@@ -107,34 +128,34 @@ namespace AsyncTcp
             {
                 Console.WriteLine("Receive Error: " + e.ToString());
             }
-            // We stopped receiving bytes, meaning we disconnected.  Remove the Peer.
+            // Clean up the Peers socket and remove from list of peers
             await RemovePeer(peer).ConfigureAwait(false);
         }
 
         public void Stop()
         {
-            // FIXME Im not sure the main loop will exit properly, check this
             _serverRunning = false;
         }
 
         public void Shutdown(AsyncPeer peer)
         {
-            // FIXME Im not sure the peer loop will exit properly, check this
             peer.Active = false;
         }
 
         private async Task RemovePeer(AsyncPeer peer)
         {
-            bool removed = false;
+            var removed = false;
             lock (_peers)
             {
                 removed = _peers.Remove(peer);
             }
+            // This should always be true, but just in case...
             if (removed)
             {
                 // Close the socket on our end
                 try
                 {
+                    // Let's wait until sends are complete before we shut down
                     await peer.SendLock.WaitAsync().ConfigureAwait(false);
                     peer.Socket.Shutdown(SocketShutdown.Both);
                     peer.Socket.Close();
@@ -161,28 +182,32 @@ namespace AsyncTcp
 
         private async Task KeepAlive()
         {
-            int count = _keepAliveInterval;
+            List<AsyncPeer> copy;
+            List<Task> tasks;
+            var count = _keepAliveInterval;
+
             while (_serverRunning)
             {
                 // Send Keep Alives every interval
                 if (count == _keepAliveInterval)
                 {
                     count = 0;
-
                     if (_peers.Count == 0)
                         continue;
 
-                    // Lock and duplicate our peers list
-                    List<AsyncPeer> copy;
+                    // Lock and duplicate our peers list, that way we can process outside of lock
                     lock (_peers)
                     {
                         copy = new List<AsyncPeer>(_peers);
                     }
-                    // Iterate over our copy and send keep-alive messages
-                    foreach (AsyncPeer peer in copy)
+
+                    // Distribute our SendKeepAlive tasks and wait until they are done
+                    tasks = new List<Task>();
+                    for (int i = 0; i < copy.Count; i++)
                     {
-                        await SendKeepAlive(peer).ConfigureAwait(false);
+                        tasks.Add(SendKeepAlive(copy[i]));
                     }
+                    await Task.WhenAll(tasks);
                 }
                 else
                 {
