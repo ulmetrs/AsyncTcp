@@ -74,7 +74,7 @@ namespace AsyncTcp
             int bytesRead;
             try
             {
-                while (_clientRunning && (bytesRead = await socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
+                while ((bytesRead = await socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
                 {
                     // Write our buffer bytes to the peer's message stream
                     peer.Stream.Write(buffer, 0, bytesRead);
@@ -82,23 +82,20 @@ namespace AsyncTcp
                     await ParseReceive(peer).ConfigureAwait(false);
                 }
             }
-            catch (Exception e)
+            catch
             {
-                Console.WriteLine("Receive Error: " + e.ToString());
+                // Exception driven design I know, but need to work with what I got
             }
             // We stopped receiving bytes, meaning we disconnected
-            await RemovePeer().ConfigureAwait(false);
+            await Stop().ConfigureAwait(false);
             // Wait for keep alive to finish
             Task.WaitAll(_keepAlive);
         }
 
-        public void Stop()
+        public async Task Stop()
         {
             _clientRunning = false;
-        }
 
-        private async Task RemovePeer()
-        {
             if (_server != null)
             {
                 // Close the socket on our end

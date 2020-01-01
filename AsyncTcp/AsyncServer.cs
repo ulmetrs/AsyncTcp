@@ -115,7 +115,7 @@ namespace AsyncTcp
             int bytesRead;
             try
             {
-                // Loop Receive, Stopping when Server Stopped, Peer Shutdown, bytesRead = 0 (Client Graceful Shutdown), or Exception (Client Ungraceful Disconnect)
+                // Loop Receive, Stopping when Server Stopped, Peer Shutdown, bytesRead = 0 (Client Graceful Shutdown), or Exception (Server Force Remove/Shutdown)
                 while (_serverRunning && (bytesRead = await peer.Socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
                 {
                     // Write our buffer bytes to the peer's message stream
@@ -124,9 +124,9 @@ namespace AsyncTcp
                     await ParseReceive(peer).ConfigureAwait(false);
                 }
             }
-            catch (Exception e)
+            catch
             {
-                Console.WriteLine("Receive Error: " + e.ToString());
+                // Exception driven design I know, but need to work with what I got
             }
             // Clean up the Peers socket and remove from list of peers
             await RemovePeer(peer).ConfigureAwait(false);
