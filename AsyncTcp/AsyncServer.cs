@@ -116,7 +116,7 @@ namespace AsyncTcp
             try
             {
                 // Loop Receive, Stopping when Server Stopped, Peer Shutdown, bytesRead = 0 (Client Graceful Shutdown), or Exception (Client Ungraceful Disconnect)
-                while (_serverRunning && peer.Active && (bytesRead = await peer.Socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
+                while (_serverRunning && (bytesRead = await peer.Socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
                 {
                     // Write our buffer bytes to the peer's message stream
                     peer.Stream.Write(buffer, 0, bytesRead);
@@ -132,24 +132,39 @@ namespace AsyncTcp
             await RemovePeer(peer).ConfigureAwait(false);
         }
 
-        public void Stop()
+        public async Task Stop()
         {
+            // Stop the Accept Loop
             _serverRunning = false;
+
+            if (_peers.Count == 0)
+                return;
+
+            List<AsyncPeer> copy;
+            List<Task> tasks;
+            // Lock and duplicate our peers list, that way we can process outside of lock
+            lock (_peers)
+            {
+                copy = new List<AsyncPeer>(_peers);
+            }
+            // Distribute our RemovePeer tasks and wait until they are done
+            tasks = new List<Task>();
+            for (int i = 0; i < copy.Count; i++)
+            {
+                tasks.Add(RemovePeer(copy[i]));
+            }
+            await Task.WhenAll(tasks).ConfigureAwait(false);
         }
 
-        public void Shutdown(AsyncPeer peer)
-        {
-            peer.Active = false;
-        }
-
-        private async Task RemovePeer(AsyncPeer peer)
+        public async Task RemovePeer(AsyncPeer peer)
         {
             var removed = false;
             lock (_peers)
             {
                 removed = _peers.Remove(peer);
             }
-            // This should always be true, but just in case...
+            // RemovePeer can be called from the server directly, upon closing the socket, ReceiveAsync will exit appropriately and call RemovePeer
+            // again. With this check we only only call the handler methods once.
             if (removed)
             {
                 // Close the socket on our end
@@ -185,7 +200,6 @@ namespace AsyncTcp
             List<AsyncPeer> copy;
             List<Task> tasks;
             var count = _keepAliveInterval;
-
             while (_serverRunning)
             {
                 // Send Keep Alives every interval
@@ -200,14 +214,13 @@ namespace AsyncTcp
                     {
                         copy = new List<AsyncPeer>(_peers);
                     }
-
                     // Distribute our SendKeepAlive tasks and wait until they are done
                     tasks = new List<Task>();
                     for (int i = 0; i < copy.Count; i++)
                     {
                         tasks.Add(SendKeepAlive(copy[i]));
                     }
-                    await Task.WhenAll(tasks);
+                    await Task.WhenAll(tasks).ConfigureAwait(false);
                 }
                 else
                 {
