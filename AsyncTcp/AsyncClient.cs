@@ -61,7 +61,7 @@ namespace AsyncTcp
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.ToString());
+                Console.WriteLine("Peer Connected Error: " + e.ToString());
             }
             // Set client running
             _clientRunning = true;
@@ -87,31 +87,41 @@ namespace AsyncTcp
                 // Exception driven design I know, but need to work with what I got
             }
             // We stopped receiving bytes, meaning we disconnected
-            await Stop().ConfigureAwait(false);
+            await ShutDown().ConfigureAwait(false);
             // Wait for keep alive to finish
             Task.WaitAll(_keepAlive);
         }
 
-        public async Task Stop()
+        public void Stop()
         {
+            // Turn off client running flag
             _clientRunning = false;
 
+            // Send Kill Signal to the Server Socket
+            try
+            {
+                _server.Socket.Shutdown(SocketShutdown.Both);
+                _server.Socket.Close();
+            }
+            catch
+            {
+                // Do nothing
+            }
+        }
+
+        public async Task ShutDown()
+        {
             if (_server != null)
             {
                 // Close the socket on our end
                 try
                 {
-                    await _server.SendLock.WaitAsync().ConfigureAwait(false);
                     _server.Socket.Shutdown(SocketShutdown.Both);
                     _server.Socket.Close();
                 }
-                catch (Exception e)
+                catch
                 {
-                    Console.WriteLine(e.ToString());
-                }
-                finally
-                {
-                    _server.SendLock.Release();
+                    // Do nothing
                 }
                 // Handler Callback for peer disconnected
                 try
@@ -120,10 +130,10 @@ namespace AsyncTcp
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine(e.ToString());
+                    Console.WriteLine("Peer Disconnected Error: " + e.ToString());
                 }
+                _server = null;
             }
-            _server = null;
         }
 
         private async Task KeepAlive()
