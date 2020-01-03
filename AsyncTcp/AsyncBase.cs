@@ -52,7 +52,7 @@ namespace AsyncTcp
             }
             catch (Exception e)
             {
-                Console.WriteLine("Send Exception: " + e.ToString());
+                Console.WriteLine("Send Error: " + e.ToString());
             }
             finally
             {
@@ -111,7 +111,7 @@ namespace AsyncTcp
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine("ParseReceive Exception: " + e.ToString());
+                    Console.WriteLine("Data Received Error: " + e.ToString());
                 }
                 // Reset our state variables
                 peer.DataType = -1;
@@ -144,7 +144,7 @@ namespace AsyncTcp
             }
             catch (Exception e)
             {
-                Console.WriteLine("SendKeepAlive Exception: " + e.ToString());
+                Console.WriteLine("SendKeepAlive Error: " + e.ToString());
             }
             finally
             {

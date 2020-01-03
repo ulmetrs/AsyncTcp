@@ -15,9 +15,9 @@ namespace AsyncTcp
 
         private IPAddress _ipAddress;
         private int _bindPort;
-
-        private readonly List<AsyncPeer> _peers = new List<AsyncPeer>();
+        private Socket _listener;
         private bool _serverRunning = false;
+        private readonly List<AsyncPeer> _peers = new List<AsyncPeer>();
 
         public AsyncServer(
             AsyncHandler handler,
@@ -44,11 +44,10 @@ namespace AsyncTcp
             // Establish the local endpoint for the socket.
             IPEndPoint localEndPoint = new IPEndPoint(_ipAddress, _bindPort);
             // Create a TCP/IP socket.  
-            Socket listener = new Socket(_ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            _listener = new Socket(_ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
             // Bind the socket to the local endpoint and listen for incoming connections.
-            listener.Bind(localEndPoint);
-            listener.Listen(100);
-
+            _listener.Bind(localEndPoint);
+            _listener.Listen(100);
             // Set server running
             _serverRunning = true;
             // Create a list of tasks
@@ -60,29 +59,34 @@ namespace AsyncTcp
             // Count our tasks added
             var taskCount = 0;
             Socket socket;
-            // Accept all connections while server running
-            while (_serverRunning)
+            try
             {
-                // Cleanup our tasks list, server can be long running so we don't wan't to append tasks forever
-                if (taskCount >= _taskCleanupInterval)
+                // Accept all connections while server running
+                while (_serverRunning && (socket = await _listener.AcceptAsync().ConfigureAwait(false)) != null)
                 {
-                    taskCount = 0;
-                    var newTasks = new List<Task>();
-                    for (int i = 0; i < tasks.Count; i++)
+                    // Add Async Task Process Socket, this task will handle the new connection until it closes
+                    tasks.Add(ProcessSocket(socket));
+                    // Increment task count so we know when to run our task cleanup again
+                    taskCount++;
+                    // Cleanup our tasks list, server can be long running so we don't wan't to append tasks forever
+                    if (taskCount >= _taskCleanupInterval)
                     {
-                        if (!tasks[i].IsCompleted)
+                        taskCount = 0;
+                        var newTasks = new List<Task>();
+                        for (int i = 0; i < tasks.Count; i++)
                         {
-                            newTasks.Add(tasks[i]);
+                            if (!tasks[i].IsCompleted)
+                            {
+                                newTasks.Add(tasks[i]);
+                            }
                         }
+                        tasks = newTasks;
                     }
-                    tasks = newTasks;
                 }
-                // Synchronously await Accepts
-                socket = await listener.AcceptAsync().ConfigureAwait(false);
-                // Add Async Task Process Socket, this task will handle the new connection until it closes
-                tasks.Add(ProcessSocket(socket));
-                // Increment task count so we know when to run our task cleanup again
-                taskCount++;
+            }
+            catch
+            {
+                // Exception driven design I know, but need to work with what I got
             }
             // Wait for all remaining tasks to finish
             await Task.WhenAll(tasks).ConfigureAwait(false);
@@ -132,28 +136,44 @@ namespace AsyncTcp
             await RemovePeer(peer).ConfigureAwait(false);
         }
 
-        public async Task Stop()
+        public void Stop()
         {
-            // Stop the Accept Loop
+            // Turn off server running flag
             _serverRunning = false;
+
+            // Send Kill Signal to the Listener Socket
+            try
+            {
+                _listener.Shutdown(SocketShutdown.Both);
+                _listener.Close();
+            }
+            catch
+            {
+                // Do nothing
+            }
 
             if (_peers.Count == 0)
                 return;
 
             List<AsyncPeer> copy;
-            List<Task> tasks;
-            // Lock and duplicate our peers list, that way we can process outside of lock
+            // Shallow copy our current peers, to avoid out of bounds exception
             lock (_peers)
             {
                 copy = new List<AsyncPeer>(_peers);
             }
-            // Distribute our RemovePeer tasks and wait until they are done
-            tasks = new List<Task>();
+            // Send Kill Signals to the Peer Sockets
             for (int i = 0; i < copy.Count; i++)
             {
-                tasks.Add(RemovePeer(copy[i]));
+                try
+                {
+                    copy[i].Socket.Shutdown(SocketShutdown.Both);
+                    copy[i].Socket.Close();
+                }
+                catch
+                {
+                    // Do nothing
+                }
             }
-            await Task.WhenAll(tasks).ConfigureAwait(false);
         }
 
         public async Task RemovePeer(AsyncPeer peer)
@@ -163,34 +183,28 @@ namespace AsyncTcp
             {
                 removed = _peers.Remove(peer);
             }
-            // RemovePeer can be called from the server directly, upon closing the socket, ReceiveAsync will exit appropriately and call RemovePeer
+            // RemovePeer can be called from the server directly: upon closing the socket ReceiveAsync will exit appropriately and call RemovePeer
             // again. With this check we only only call the handler methods once.
             if (removed)
             {
                 // Close the socket on our end
                 try
                 {
-                    // Let's wait until sends are complete before we shut down
-                    await peer.SendLock.WaitAsync().ConfigureAwait(false);
                     peer.Socket.Shutdown(SocketShutdown.Both);
                     peer.Socket.Close();
                 }
-                catch (Exception e)
+                catch
                 {
-                    Console.WriteLine(e.ToString());
+                    // Do nothing
                 }
-                finally
-                {
-                    peer.SendLock.Release();
-                }
-                // Handler Callback for peer disconnected
+                // Handler callback for peer disconnected
                 try
                 {
                     await _handler.PeerDisconnected(peer).ConfigureAwait(false);
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine(e.ToString());
+                    Console.WriteLine("Peer Disconnected Error: " + e.ToString());
                 }
             }
         }
