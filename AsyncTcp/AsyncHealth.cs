@@ -1,8 +1,9 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading;
 using System.Threading.Tasks;
+using static AsyncTcp.Utils;
+using static AsyncTcp.Values;
 
 namespace AsyncTcp
 {
@@ -29,7 +30,8 @@ namespace AsyncTcp
                 _ipAddress = ipHostInfo.AddressList[0];
             }
             _bindPort = bindPort;
-            Console.WriteLine("Hostname : " + Dns.GetHostName() + "   ip : " + _ipAddress + "   port : " + _bindPort);
+
+            await LogMessageAsync(string.Format(HostnameMessage, Dns.GetHostName(), ipAddress, _bindPort)).ConfigureAwait(false);
             // Establish the local endpoint for the socket.  
             IPEndPoint localEndPoint = new IPEndPoint(_ipAddress, _bindPort);
             // Create a TCP/IP socket.  
@@ -46,7 +48,7 @@ namespace AsyncTcp
                 {
                     socket.Shutdown(SocketShutdown.Both);
                     socket.Close();
-                    Thread.Sleep(1000);
+                    await Task.Delay(1000).ConfigureAwait(false);
                 }
             }
             catch
@@ -65,9 +67,7 @@ namespace AsyncTcp
                 _listener.Close();
             }
             catch (Exception e)
-            {
-                Console.WriteLine(e.ToString());
-            }
+            { LogError(e, null, false); }
         }
     }
 }

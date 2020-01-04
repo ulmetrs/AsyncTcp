@@ -1,0 +1,14 @@
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\obj\Debug\netcoreapp3.1\AsyncTester.csprojAssemblyReference.cache
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\obj\Debug\netcoreapp3.1\AsyncTester.AssemblyInfoInputs.cache
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\obj\Debug\netcoreapp3.1\AsyncTester.AssemblyInfo.cs
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\bin\Debug\netcoreapp3.1\AsyncTester.exe
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\bin\Debug\netcoreapp3.1\AsyncTester.deps.json
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\bin\Debug\netcoreapp3.1\AsyncTester.runtimeconfig.json
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\bin\Debug\netcoreapp3.1\AsyncTester.runtimeconfig.dev.json
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\bin\Debug\netcoreapp3.1\AsyncTester.dll
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\bin\Debug\netcoreapp3.1\AsyncTester.pdb
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\bin\Debug\netcoreapp3.1\AsyncTcp.dll
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\bin\Debug\netcoreapp3.1\AsyncTcp.pdb
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\obj\Debug\netcoreapp3.1\AsyncTester.csproj.CopyComplete
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\obj\Debug\netcoreapp3.1\AsyncTester.dll
+C:\Github\ulmetrs\AsyncTcp\AsyncTester\obj\Debug\netcoreapp3.1\AsyncTester.pdb

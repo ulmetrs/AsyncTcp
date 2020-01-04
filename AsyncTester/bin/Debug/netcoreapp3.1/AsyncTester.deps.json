@@ -1,0 +1,47 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v3.1",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v3.1": {
+      "AsyncTester/1.0.0": {
+        "dependencies": {
+          "AsyncTcp": "1.0.13"
+        },
+        "runtime": {
+          "AsyncTester.dll": {}
+        }
+      },
+      "System.Buffers/4.5.0": {},
+      "AsyncTcp/1.0.13": {
+        "dependencies": {
+          "System.Buffers": "4.5.0"
+        },
+        "runtime": {
+          "AsyncTcp.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "AsyncTester/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "System.Buffers/4.5.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-pL2ChpaRRWI/p4LXyy4RgeWlYF2sgfj/pnVMvBqwNFr5cXg7CXNnWZWxrOONLg8VGdFB8oB+EG2Qw4MLgTOe+A==",
+      "path": "system.buffers/4.5.0",
+      "hashPath": "system.buffers.4.5.0.nupkg.sha512"
+    },
+    "AsyncTcp/1.0.13": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

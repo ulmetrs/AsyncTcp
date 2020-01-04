@@ -1,13 +1,15 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading;
 using System.Threading.Tasks;
+using static AsyncTcp.Utils;
+using static AsyncTcp.Values;
 
 namespace AsyncTcp
 {
-    public class AsyncClient : AsyncBase
+    public class AsyncClient
     {
+        private readonly IAsyncHandler _handler;
         private int _recvBufferSize;
         private int _keepAliveInterval;
 
@@ -19,10 +21,10 @@ namespace AsyncTcp
         private bool _clientRunning = false;
 
         public AsyncClient(
-            AsyncHandler handler,
+            IAsyncHandler handler,
             int recvBufferSize = 1024,
-            int keepAliveInterval = 10) {
-
+            int keepAliveInterval = 10)
+        {
             _handler = handler ?? throw new Exception("Handler cannot be null");
             _recvBufferSize = recvBufferSize;
             _keepAliveInterval = keepAliveInterval;
@@ -30,39 +32,62 @@ namespace AsyncTcp
 
         public Task Send(int dataType, int dataSize, byte[] data)
         {
-            return Send(_server, dataType, dataSize, data);
+            return _server.Send(dataType, dataSize, data);
         }
 
-        public async Task Start(string hostname, int bindPort = 9050)
+        public async Task Start(string hostname, int bindPort = 9050, bool findDnsMatch = true)
         {
             _hostName = hostname;
             _bindPort = bindPort;
-            // Connect to a remote device.
-            IPHostEntry ipHostInfo = Dns.GetHostEntry(_hostName);
-            IPAddress ipAddress = ipHostInfo.AddressList[0];
 
-            Console.WriteLine("hostname : " + _hostName + "   ip : " + ipAddress + "   port : " + _bindPort);
-            // Establish the remote endpoint for the socket.
-            IPEndPoint remoteEndpoint = new IPEndPoint(ipAddress, _bindPort);
-            // Create a TCP/IP socket.  
-            Socket socket = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            Socket socket = null;
+            IPEndPoint remoteEndpoint = null;
+            if (findDnsMatch)
+            {
+                var ipHostInfo = Dns.GetHostEntry(_hostName);
+
+                foreach (var address in ipHostInfo.AddressList)
+                {
+                    //Break on first IPv4 address.
+                    // InterNetworkV6 for IPv6
+                    if (address.ToString() == _hostName)
+                    {
+                        remoteEndpoint = new IPEndPoint(address, _bindPort);
+                        socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                        break;
+                    }
+                }
+            }
+
+            if (socket == null)
+            {
+                // Connect to a remote device.
+                IPHostEntry ipHostInfo = Dns.GetHostEntry(_hostName);
+                IPAddress ipAddress = ipHostInfo.AddressList[0];
+
+                await LogMessageAsync(string.Format(HostnameMessage, _hostName, ipAddress, _bindPort)).ConfigureAwait(false);
+
+                //Trace.WriteLine("hostname : " + _hostName + "   ip : " + ipAddress + "   port : " + _bindPort);
+                // Establish the remote endpoint for the socket.
+                remoteEndpoint = new IPEndPoint(ipAddress, _bindPort);
+                // Create a TCP/IP socket.  
+                socket = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            }
+
             // Connect
-            await socket.ConnectAsync(remoteEndpoint);
+            await socket.ConnectAsync(remoteEndpoint).ConfigureAwait(false);
             // Disable Nagles
             socket.NoDelay = true;
             // Create the peer
-            var peer = new AsyncPeer(socket, _recvBufferSize);
-            // Set server variable
-            _server = peer;
+            _server = new AsyncPeer(socket, _recvBufferSize);
             // Handle Peer Connected
             try
             {
-                await _handler.PeerConnected(peer).ConfigureAwait(false);
+                await _handler.PeerConnected(_server).ConfigureAwait(false);
             }
             catch (Exception e)
-            {
-                Console.WriteLine("Peer Connected Error: " + e.ToString());
-            }
+            { await LogErrorAsync(e, PeerConnectedErrorMessage, false).ConfigureAwait(false); }
+
             // Set client running
             _clientRunning = true;
             // Start our keep-alive thread
@@ -77,9 +102,9 @@ namespace AsyncTcp
                 while ((bytesRead = await socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
                 {
                     // Write our buffer bytes to the peer's message stream
-                    peer.Stream.Write(buffer, 0, bytesRead);
+                    _server.Stream.Write(buffer, 0, bytesRead);
                     // Parse the bytes that we do have, could be an entire message, a partial message split because of tcp, or partial message split because of buffer size
-                    await ParseReceive(peer).ConfigureAwait(false);
+                    await _server.ParseReceive(_handler).ConfigureAwait(false);
                 }
             }
             catch
@@ -144,7 +169,7 @@ namespace AsyncTcp
                 // Send Keep Alives every interval
                 if (count == _keepAliveInterval)
                 {
-                    await SendKeepAlive(_server).ConfigureAwait(false);
+                    await _server.SendKeepAlive().ConfigureAwait(false);
                     count = 0;
                 }
                 else
@@ -152,7 +177,7 @@ namespace AsyncTcp
                     count++;
                 }
                 // Check every second for exit
-                Thread.Sleep(1000);
+                await Task.Delay(1000).ConfigureAwait(false);
             }
         }
     }

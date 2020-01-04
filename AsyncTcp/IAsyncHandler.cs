@@ -2,7 +2,7 @@
 
 namespace AsyncTcp
 {
-    public interface AsyncHandler
+    public interface IAsyncHandler
     {
         Task PeerConnected(AsyncPeer peer);
         Task PeerDisconnected(AsyncPeer peer);
