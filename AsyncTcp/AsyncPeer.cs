@@ -29,7 +29,7 @@ namespace AsyncTcp
             Interlocked.Increment(ref GlobalPeerId);
         }
 
-        public async Task SendAsync(int dataType, byte[] data)
+        public async Task SendAsync(int dataType, byte[] data = null)
         {
             var dataSize = data?.Length ?? 0;
 
