@@ -7,3 +7,5 @@ AsyncTcp/obj/
 .vs/AsyncTcp/v15/.suo
 *.ide
 .vs/AsyncTcp/v15/Server/sqlite3/storage.ide
+AsyncTester/bin/
+AsyncTester/obg/

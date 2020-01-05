@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Buffers;
-using System.Diagnostics;
 using System.IO;
 using System.Net.Sockets;
 using System.Threading;
@@ -20,7 +19,7 @@ namespace AsyncTcp
         public int DataType = -1;
         public int DataSize = -1;
 
-        public AsyncPeer(Socket sock, int recvBufferSize)
+        public AsyncPeer(Socket sock)
         {
             Socket = sock;
             Stream = new MemoryStream();
@@ -30,26 +29,37 @@ namespace AsyncTcp
             Interlocked.Increment(ref GlobalPeerId);
         }
 
-        public async Task Send(int dataType, int dataSize, byte[] data)
+        public async Task SendAsync(int dataType, int dataSize, byte[] data)
         {
-            //_logger.LogInformation("Begining Send, Type : " + dataType + " - Size : " + dataSize);
-            // Calc total size of the send bytes
-            var totalSize = dataSize + 8;
-            // Rent a buffer
-            var buffer = ArrayPool<byte>.Shared.Rent(totalSize);
-            //var buffer = new byte[totalSize];
+            // Create Send DataBuffer
+            var buffer = await CreateSendBuffer(dataType, dataSize, data).ConfigureAwait(false);
 
-            // Lock our sendasync to ensure message bytes are contiguous
-            // Keep sending bytes until done
+            // Acquire Lock.
+            await SendLock.WaitAsync().ConfigureAwait(false);
+
+            await SendBufferAsync(dataSize, buffer).ConfigureAwait(false);
+
+            SendLock.Release();
+
+            // Return rented array used for buffer.
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+
+        private async Task<byte[]> CreateSendBuffer(int dataType, int dataSize, byte[] data)
+        {
+            // Rent a buffer
+            //var buffer = new byte[totalSize];
+            var buffer = ArrayPool<byte>.Shared.Rent(dataSize + ByteOffsetSize);
+
             await Task.Run(() =>
             {
-                // Write our data into the buffer
                 using (MemoryStream stream = new MemoryStream(buffer))
                 {
                     using (BinaryWriter writer = new BinaryWriter(stream))
                     {
                         writer.Write(dataType);
                         writer.Write(dataSize);
+
                         // Some packets have no additional data
                         if (data != null)
                         {
@@ -59,24 +69,21 @@ namespace AsyncTcp
                 }
             }).ConfigureAwait(false);
 
-            // Acquire Lock.
-            await SendLock.WaitAsync().ConfigureAwait(false);
+            return buffer;
+        }
 
+        private async Task SendBufferAsync(int dataSize, byte[] sendBuffer)
+        {
             var offset = 0;
             try
             {
-                while (offset < totalSize)
+                while (offset < dataSize + ByteOffsetSize)
                 {
-                    offset += await Socket.SendAsync(new ArraySegment<byte>(buffer, offset, totalSize - offset), 0).ConfigureAwait(false);
+                    offset += await Socket.SendAsync(new ArraySegment<byte>(sendBuffer, offset, dataSize + ByteOffsetSize - offset), 0).ConfigureAwait(false);
                 }
             }
             catch (Exception e)
             { await LogErrorAsync(e, SendErrorMessage, false).ConfigureAwait(false); }
-
-            // Unlock to allow other sends
-            SendLock.Release();
-            // Return the buffer
-            ArrayPool<byte>.Shared.Return(buffer);
         }
 
         public async Task ParseReceive(IAsyncHandler asyncHandler)
@@ -87,7 +94,7 @@ namespace AsyncTcp
             // If I was fancy I could try larger recv buffers and use the BeginReceive index for subsequent calls, but not necessary currently
 
             // We have not yet read our message header (data size< 0) but have enough bytes to (stream position >= 8)
-            if (DataSize < 0 && Stream.Position >= 8)
+            if (DataSize < 0 && Stream.Position >= ByteOffsetSize)
             {
                 // Store our write position to set back
                 long writePos = Stream.Position;
@@ -114,7 +121,7 @@ namespace AsyncTcp
                 if (DataSize > 0)
                 {
                     // Seek to the beginning of our data (byte 8)
-                    Stream.Seek(8, SeekOrigin.Begin);
+                    Stream.Seek(ByteOffsetSize, SeekOrigin.Begin);
                     // Create a data-sized array for our callback
                     data = ArrayPool<byte>.Shared.Rent(DataSize);
                     // Read up to our data boundary
@@ -156,9 +163,9 @@ namespace AsyncTcp
                 // Lock our sendasync to ensure message bytes are contiguous
                 // Keep sending bytes until done
                 var offset = 0;
-                while (offset < 8)
+                while (offset < ByteOffsetSize)
                 {
-                    offset += await Socket.SendAsync(new ArraySegment<byte>(KABytes, offset, 8 - offset), 0).ConfigureAwait(false);
+                    offset += await Socket.SendAsync(new ArraySegment<byte>(KABytes, offset, ByteOffsetSize - offset), 0).ConfigureAwait(false);
                 }
             }
             catch (Exception e)

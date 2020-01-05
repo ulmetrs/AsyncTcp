@@ -12,9 +12,9 @@ namespace AsyncTcp
     public class AsyncServer
     {
         private readonly IAsyncHandler _handler;
-        private int _recvBufferSize;
-        private int _keepAliveInterval;
-        private int _taskCleanupInterval = 100;
+        private readonly int _recvBufferSize;
+        private readonly int _keepAliveInterval;
+        private readonly int _taskCleanupInterval = 100;
 
         private IPAddress _ipAddress;
         private int _bindPort;
@@ -108,7 +108,7 @@ namespace AsyncTcp
         private async Task ProcessSocket(Socket socket)
         {
             socket.NoDelay = true;
-            var peer = new AsyncPeer(socket, _recvBufferSize);
+            var peer = new AsyncPeer(socket);
             _peers[peer.PeerId] = peer;
 
             try

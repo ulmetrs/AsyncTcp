@@ -1,5 +1,6 @@
 ﻿using AsyncTcp;
 using System;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace AsyncTester
@@ -19,10 +20,9 @@ namespace AsyncTester
             StartTask = AsyncServer.Start();
         }
 
-        public Task Shutdown()
+        public void Shutdown()
         {
             AsyncServer.Stop();
-            return Task.CompletedTask;
         }
 
         public async Task PeerConnected(AsyncPeer peer)
@@ -38,6 +38,9 @@ namespace AsyncTester
         public async Task DataReceived(AsyncPeer peer, int dataType, int dataSize, byte[] data)
         {
             await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) data received...").ConfigureAwait(false);
+
+            var dataString = data == null ? "null" : Encoding.UTF8.GetString(data);
+            await Console.Out.WriteLineAsync($"Data: {dataString}").ConfigureAwait(false);
         }
     }
 }

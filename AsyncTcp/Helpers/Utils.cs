@@ -34,7 +34,7 @@ namespace AsyncTcp
         // TODO: Connect Trace LogProvider to AWS CloudWatch (Setup app.config for Trace LogProvider)
         public static async Task LogMessageAsync(string message, bool printToConsole = false)
         {
-            var logMessage = string.Format(SimpleTracerMessageFormatter, DateTime.UtcNow.ToString("dd/MM/yyyy hh:mm:ss.zzz"), message);
+            var logMessage = string.Format(SimpleTracerMessageFormatter, DateTime.UtcNow.ToString("dd/MM/yyyy hh:mm:ss.fff"), message);
             Trace.WriteLine(logMessage);
 
             if (printToConsole)
@@ -47,9 +47,9 @@ namespace AsyncTcp
         {
             string logMessage;
             if (message == null)
-            { logMessage = string.Format(SimpleErrorTracerFormatter, DateTime.UtcNow.ToString("dd/MM/yyyy hh:mm:ss.zzz"), ex.Message, ex.StackTrace); }
+            { logMessage = string.Format(SimpleErrorTracerFormatter, DateTime.UtcNow.ToString("dd/MM/yyyy hh:mm:ss.fff"), ex.Message, ex.StackTrace); }
             else
-            { logMessage = string.Format(SimpleErrorTracerMessageFormatter, DateTime.UtcNow.ToString("dd/MM/yyyy hh:mm:ss.zzz"), message, ex.Message, ex.StackTrace); }
+            { logMessage = string.Format(SimpleErrorTracerMessageFormatter, DateTime.UtcNow.ToString("dd/MM/yyyy hh:mm:ss.fff"), message, ex.Message, ex.StackTrace); }
 
             Trace.WriteLine(logMessage);
 
@@ -63,9 +63,9 @@ namespace AsyncTcp
         {
             string logMessage;
             if (message == null)
-            { logMessage = string.Format(SimpleErrorTracerFormatter, DateTime.UtcNow.ToString("dd/MM/yyyy hh:mm:ss.zzz"), ex.Message, ex.StackTrace); }
+            { logMessage = string.Format(SimpleErrorTracerFormatter, DateTime.UtcNow.ToString("dd/MM/yyyy hh:mm:ss.fff"), ex.Message, ex.StackTrace); }
             else
-            { logMessage = string.Format(SimpleErrorTracerMessageFormatter, DateTime.UtcNow.ToString("dd/MM/yyyy hh:mm:ss.zzz"), message, ex.Message, ex.StackTrace); }
+            { logMessage = string.Format(SimpleErrorTracerMessageFormatter, DateTime.UtcNow.ToString("dd/MM/yyyy hh:mm:ss.fff"), message, ex.Message, ex.StackTrace); }
 
             Trace.WriteLine(logMessage);
 

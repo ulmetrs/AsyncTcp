@@ -1,30 +1,30 @@
 ﻿using AsyncTcp;
 using System;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace AsyncTester
 {
     public class ClientManager : IAsyncHandler
     {
-        public AsyncClient _asyncClient { get; }
+        public AsyncClient AsyncClient { get; }
         public string ServerHostName { get; }
         private Task StartTask;
 
         public ClientManager(string serverHostName)
         {
             ServerHostName = serverHostName;
-            _asyncClient = new AsyncClient(this, 1024, 10);
+            AsyncClient = new AsyncClient(this, 1024, 10);
         }
 
         public void Start()
         {
-            StartTask = _asyncClient.Start(ServerHostName);
+            StartTask = AsyncClient.Start(ServerHostName, 9050, true);
         }
 
-        public Task Shutdown()
+        public void Shutdown()
         {
-            _asyncClient.Stop();
-            return Task.CompletedTask;
+            AsyncClient.Stop();
         }
 
         public async Task PeerConnected(AsyncPeer peer)
@@ -40,6 +40,8 @@ namespace AsyncTester
         public async Task DataReceived(AsyncPeer peer, int dataType, int dataSize, byte[] data)
         {
             await Console.Out.WriteLineAsync($"Client (PeerId: {peer.PeerId}) data received...").ConfigureAwait(false);
+            var dataString = data == null ? "null" : Encoding.UTF8.GetString(data);
+            await Console.Out.WriteLineAsync($"Data: {dataString}").ConfigureAwait(false);
         }
     }
 }

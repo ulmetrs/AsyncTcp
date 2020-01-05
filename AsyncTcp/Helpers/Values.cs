@@ -2,6 +2,7 @@
 {
     public static class Values
     {
+        public const int ByteOffsetSize = 8;
         public static byte[] KABytes { get; } = new byte[8];
 
         // String Error Messages
