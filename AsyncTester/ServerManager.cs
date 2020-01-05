@@ -35,7 +35,7 @@ namespace AsyncTester
             await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) disconnected...").ConfigureAwait(false);
         }
 
-        public async Task DataReceived(AsyncPeer peer, int dataType, int dataSize, byte[] data)
+        public async Task DataReceived(AsyncPeer peer, int dataType, byte[] data)
         {
             await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) data received...").ConfigureAwait(false);
 

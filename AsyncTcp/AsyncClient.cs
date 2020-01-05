@@ -30,9 +30,9 @@ namespace AsyncTcp
             _keepAliveInterval = keepAliveInterval;
         }
 
-        public Task Send(int dataType, int dataSize, byte[] data)
+        public Task SendAsync(int dataType, byte[] data)
         {
-            return _serverPeer.SendAsync(dataType, dataSize, data);
+            return _serverPeer.SendAsync(dataType, data);
         }
 
         public async Task Start(string hostname, int bindPort = 9050, bool findDnsMatch = false)
@@ -55,10 +55,9 @@ namespace AsyncTcp
             {
                 while ((bytesRead = await socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
                 {
-                    // Write our buffer bytes to the peer's message stream
-                    _serverPeer.Stream.Write(buffer, 0, bytesRead);
-                    // Parse the bytes that we do have, could be an entire message, a partial message split because of tcp, or partial message split because of buffer size
-                    await _serverPeer.ParseReceive(_handler).ConfigureAwait(false);
+                    // Process the bytes that we do have, could be an entire message, a partial message split because of tcp,
+                    // or partial message split because of buffer size
+                    await _serverPeer.ProcessBytes(buffer, bytesRead, _handler).ConfigureAwait(false);
                 }
             }
             catch
@@ -165,7 +164,7 @@ namespace AsyncTcp
                 // Send Keep Alives every interval
                 if (count == _keepAliveInterval)
                 {
-                    await _serverPeer.SendKeepAlive().ConfigureAwait(false);
+                    await _serverPeer.SendKeepAliveAsync().ConfigureAwait(false);
                     count = 0;
                 }
                 else

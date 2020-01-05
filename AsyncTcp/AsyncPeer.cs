@@ -29,64 +29,85 @@ namespace AsyncTcp
             Interlocked.Increment(ref GlobalPeerId);
         }
 
-        public async Task SendAsync(int dataType, int dataSize, byte[] data)
+        public async Task SendAsync(int dataType, byte[] data)
         {
-            // Create Send DataBuffer
-            var buffer = await CreateSendBuffer(dataType, dataSize, data).ConfigureAwait(false);
+            var dataSize = data?.Length ?? 0;
 
-            // Acquire Lock.
+            var bufferSize = ByteOffsetSize + dataSize;
+
+            var buffer = ArrayPool<byte>.Shared.Rent(ByteOffsetSize + dataSize);
+
+            WriteSendBytes(dataType, dataSize, data, buffer);
+
             await SendLock.WaitAsync().ConfigureAwait(false);
 
-            await SendBufferAsync(dataSize, buffer).ConfigureAwait(false);
+            await SendBufferAsync(bufferSize, buffer).ConfigureAwait(false);
 
             SendLock.Release();
 
-            // Return rented array used for buffer.
             ArrayPool<byte>.Shared.Return(buffer);
         }
 
-        private async Task<byte[]> CreateSendBuffer(int dataType, int dataSize, byte[] data)
+        // TODO convert to task when unity can support writeasync
+        private void WriteSendBytes(int dataType, int dataSize, byte[] data, byte[] buffer)
         {
-            // Rent a buffer
-            //var buffer = new byte[totalSize];
-            var buffer = ArrayPool<byte>.Shared.Rent(dataSize + ByteOffsetSize);
-
-            await Task.Run(() =>
+            using (MemoryStream stream = new MemoryStream(buffer))
             {
-                using (MemoryStream stream = new MemoryStream(buffer))
+                using (BinaryWriter writer = new BinaryWriter(stream))
                 {
-                    using (BinaryWriter writer = new BinaryWriter(stream))
+                    writer.Write(dataType);
+                    writer.Write(dataSize);
+                    // Some message types have no payload
+                    if (data != null)
                     {
-                        writer.Write(dataType);
-                        writer.Write(dataSize);
-
-                        // Some packets have no additional data
-                        if (data != null)
-                        {
-                            writer.Write(data, 0, dataSize);
-                        }
+                        writer.Write(data, 0, dataSize);
                     }
                 }
-            }).ConfigureAwait(false);
-
-            return buffer;
+            }
         }
 
-        private async Task SendBufferAsync(int dataSize, byte[] sendBuffer)
+        private async Task SendBufferAsync(int bufferSize, byte[] buffer)
         {
             var offset = 0;
             try
             {
-                while (offset < dataSize + ByteOffsetSize)
+                while (offset < bufferSize)
                 {
-                    offset += await Socket.SendAsync(new ArraySegment<byte>(sendBuffer, offset, dataSize + ByteOffsetSize - offset), 0).ConfigureAwait(false);
+                    offset += await Socket.SendAsync(new ArraySegment<byte>(buffer, offset, bufferSize - offset), 0).ConfigureAwait(false);
                 }
             }
             catch (Exception e)
             { await LogErrorAsync(e, SendErrorMessage, false).ConfigureAwait(false); }
         }
 
-        public async Task ParseReceive(IAsyncHandler asyncHandler)
+        public async Task SendKeepAliveAsync()
+        {
+            await SendLock.WaitAsync().ConfigureAwait(false);
+
+            var offset = 0;
+            try
+            {
+                while (offset < ByteOffsetSize)
+                {
+                    offset += await Socket.SendAsync(new ArraySegment<byte>(KABytes, offset, ByteOffsetSize - offset), 0).ConfigureAwait(false);
+                }
+            }
+            catch (Exception e)
+            { await LogErrorAsync(e, SendErrorMessage, false).ConfigureAwait(false); }
+
+            SendLock.Release();
+        }
+
+        public async Task ProcessBytes(byte[] buffer, int bytesRead, IAsyncHandler asyncHandler)
+        {
+            // Write the buffer bytes to the peer's message stream
+            // TODO change to writeasync when unity supports it
+            Stream.Write(buffer, 0, bytesRead);
+            // Parse the stream
+            await ParseReceive(asyncHandler).ConfigureAwait(false);
+        }
+
+        private async Task ParseReceive(IAsyncHandler asyncHandler)
         {
             BinaryReader reader;
 
@@ -130,14 +151,13 @@ namespace AsyncTcp
                 // Call the handler with our copied data, type, and size
                 try
                 {
-                    await asyncHandler.DataReceived(this, DataType, DataSize, data).ConfigureAwait(false);
+                    await asyncHandler.DataReceived(this, DataType, data).ConfigureAwait(false);
                 }
                 catch (Exception e)
                 { await LogErrorAsync(e, ParseReceiveErrorMessage, false).ConfigureAwait(false); }
-
+                // Return our data array
                 if (data != null)
                 { ArrayPool<byte>.Shared.Return(data); }
-
                 // Reset our state variables
                 DataType = -1;
                 DataSize = -1;
@@ -152,26 +172,6 @@ namespace AsyncTcp
                 // Parse the new stream, our stream may have contained multiple messages
                 await ParseReceive(asyncHandler).ConfigureAwait(false);
             }
-        }
-
-        public async Task SendKeepAlive()
-        {
-            await SendLock.WaitAsync().ConfigureAwait(false);
-
-            try
-            {
-                // Lock our sendasync to ensure message bytes are contiguous
-                // Keep sending bytes until done
-                var offset = 0;
-                while (offset < ByteOffsetSize)
-                {
-                    offset += await Socket.SendAsync(new ArraySegment<byte>(KABytes, offset, ByteOffsetSize - offset), 0).ConfigureAwait(false);
-                }
-            }
-            catch (Exception e)
-            { await LogErrorAsync(e, SendErrorMessage, false).ConfigureAwait(false); }
-
-            SendLock.Release();
         }
     }
 }

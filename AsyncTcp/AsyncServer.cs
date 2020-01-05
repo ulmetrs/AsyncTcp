@@ -120,13 +120,11 @@ namespace AsyncTcp
             int bytesRead;
             try
             {
-                // Loop Receive, Stopping when Server Stopped, Peer Shutdown, bytesRead = 0 (Client Graceful Shutdown), or Exception (Server Force Remove/Shutdown)
                 while (_serverRunning && (bytesRead = await peer.Socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
                 {
-                    // Write our buffer bytes to the peer's message stream
-                    peer.Stream.Write(buffer, 0, bytesRead);
-                    // Parse the bytes that we do have, could be an entire message, a partial message split because of tcp, or partial message split because of buffer size
-                    await peer.ParseReceive(_handler).ConfigureAwait(false);
+                    // Process the bytes that we do have, could be an entire message, a partial message split because of tcp,
+                    // or partial message split because of buffer size
+                    await peer.ProcessBytes(buffer, bytesRead, _handler).ConfigureAwait(false);
                 }
             }
             catch
@@ -204,7 +202,7 @@ namespace AsyncTcp
 
                     async Task SendKeepAliveAsync(KeyValuePair<long, AsyncPeer> keyValuePair)
                     {
-                        await keyValuePair.Value.SendKeepAlive().ConfigureAwait(false);
+                        await keyValuePair.Value.SendKeepAliveAsync().ConfigureAwait(false);
                     }
 
                     await _peers.ParallelForEachAsync(SendKeepAliveAsync, 24).ConfigureAwait(false);
