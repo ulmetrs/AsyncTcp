@@ -30,7 +30,7 @@ namespace AsyncTcp
             _keepAliveInterval = keepAliveInterval;
         }
 
-        public Task SendAsync(int dataType, byte[] data)
+        public Task SendAsync(int dataType, byte[] data = null)
         {
             return _serverPeer.SendAsync(dataType, data);
         }
