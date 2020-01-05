@@ -1,23 +1,22 @@
 ﻿using AsyncTcp;
+using AsyncTest;
 using System;
-using System.Text;
 using System.Threading.Tasks;
 
-namespace AsyncTester
+namespace ServerApp
 {
     public class ServerManager : IAsyncHandler
     {
         public AsyncServer AsyncServer { get; }
-        private Task StartTask;
 
         public ServerManager()
         {
             AsyncServer = new AsyncServer(this, 1024, 10);
         }
 
-        public void Start()
+        public Task Start()
         {
-            StartTask = AsyncServer.Start();
+            return AsyncServer.Start();
         }
 
         public void Shutdown()
@@ -37,10 +36,12 @@ namespace AsyncTester
 
         public async Task DataReceived(AsyncPeer peer, int dataType, byte[] data)
         {
-            await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) data received...").ConfigureAwait(false);
+            var bytes = await AsyncTcp.Utils.DecompressWithGzipAsync(data).ConfigureAwait(false);
+            var message = Utf8Json.JsonSerializer.Deserialize<TestMessage>(bytes);
 
-            var dataString = data == null ? "null" : Encoding.UTF8.GetString(data);
-            await Console.Out.WriteLineAsync($"Data: {dataString}").ConfigureAwait(false);
+            await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) Received Message: {message.index}").ConfigureAwait(false);
+
+            await peer.SendAsync(dataType, data);
         }
     }
 }

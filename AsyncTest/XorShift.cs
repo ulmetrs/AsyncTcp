@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace AsyncTester
+namespace AsyncTest
 {
     public class XorShift
     {
@@ -49,14 +49,14 @@ namespace AsyncTester
             FillBuffer(buffer, 0, size);
             return buffer;
         }
-
+        /*
         public byte[] UnsafeGetRandomBytes(int size)
         {
             var buffer = new byte[size];
             UnsafeFillBuffer(buffer, 0, size);
             return buffer;
         }
-
+        */
         public void FillBuffer(byte[] buffer)
         {
             uint offset = 0, offsetEnd = (uint)buffer.Length;
@@ -95,7 +95,7 @@ namespace AsyncTester
                 else { break; }
             }
         }
-
+        /*
         public unsafe void UnsafeFillBuffer(byte[] buf)
         {
             uint x = X, y = Y, z = Z, w = W;
@@ -139,5 +139,6 @@ namespace AsyncTester
             }
             X = x; Y = y; Z = z; W = w;
         }
+        */
     }
 }

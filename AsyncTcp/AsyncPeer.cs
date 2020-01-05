@@ -24,9 +24,7 @@ namespace AsyncTcp
             Socket = sock;
             Stream = new MemoryStream();
             SendLock = new SemaphoreSlim(1, 1);
-
-            PeerId = Interlocked.Read(ref GlobalPeerId);
-            Interlocked.Increment(ref GlobalPeerId);
+            PeerId = Interlocked.Increment(ref GlobalPeerId);
         }
 
         public async Task SendAsync(int dataType, byte[] data = null)

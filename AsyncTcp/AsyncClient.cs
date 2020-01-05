@@ -15,7 +15,6 @@ namespace AsyncTcp
 
         private string _hostName;
         private int _bindPort;
-        private Task _keepAlive;
 
         public AsyncPeer _serverPeer;
         private bool _clientRunning = false;
@@ -40,12 +39,12 @@ namespace AsyncTcp
             _hostName = hostname;
             _bindPort = bindPort;
 
-            var socket = await CreateAndConnectServerPeerAsync(findDnsMatch).ConfigureAwait(false);
+            _serverPeer = await CreateAndConnectServerPeerAsync(findDnsMatch).ConfigureAwait(false);
 
             // Set client running
             _clientRunning = true;
             // Start our keep-alive thread
-            _keepAlive = Task.Run(KeepAlive);
+            var keepAlive = Task.Run(KeepAlive);
             // Dedicated buffer for async reads
             var buffer = new byte[_recvBufferSize];
             var segment = new ArraySegment<byte>(buffer, 0, _recvBufferSize);
@@ -53,7 +52,7 @@ namespace AsyncTcp
             int bytesRead;
             try
             {
-                while ((bytesRead = await socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
+                while ((bytesRead = await _serverPeer.Socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
                 {
                     // Process the bytes that we do have, could be an entire message, a partial message split because of tcp,
                     // or partial message split because of buffer size
@@ -65,7 +64,7 @@ namespace AsyncTcp
             // We stopped receiving bytes, meaning we disconnected
             await ShutDown().ConfigureAwait(false);
             // Wait for keep alive to finish
-            Task.WaitAll(_keepAlive);
+            await Task.WhenAll(keepAlive).ConfigureAwait(false);
         }
 
         private async Task<(Socket, IPEndPoint)> BuildSocketAndEndpoint(bool findDnsMatch)
@@ -106,7 +105,7 @@ namespace AsyncTcp
             return (socket, remoteEndpoint);
         }
 
-        private async Task<Socket> CreateAndConnectServerPeerAsync(bool findDnsMatch)
+        private async Task<AsyncPeer> CreateAndConnectServerPeerAsync(bool findDnsMatch)
         {
             (Socket socket, IPEndPoint remoteEndpoint) = await BuildSocketAndEndpoint(findDnsMatch).ConfigureAwait(false);
 
@@ -114,14 +113,14 @@ namespace AsyncTcp
 
             socket.NoDelay = true;
 
-            _serverPeer = new AsyncPeer(socket);
+            var peer = new AsyncPeer(socket);
 
             try
-            { await _handler.PeerConnected(_serverPeer).ConfigureAwait(false); }
+            { await _handler.PeerConnected(peer).ConfigureAwait(false); }
             catch (Exception e)
             { await LogErrorAsync(e, PeerConnectedErrorMessage, false).ConfigureAwait(false); }
 
-            return socket;
+            return peer;
         }
 
         public void Stop()
