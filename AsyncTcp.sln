@@ -5,7 +5,7 @@ VisualStudioVersion = 16.0.29613.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AsyncTcp", "AsyncTcp\AsyncTcp.csproj", "{DF56ACC8-AF67-4C13-B648-BD14626C15AC}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ClientApp", "AsyncTester\ClientApp.csproj", "{BEF834EF-3856-4D4B-85C9-07E9BB12072C}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ClientApp", "ClientApp\ClientApp.csproj", "{BEF834EF-3856-4D4B-85C9-07E9BB12072C}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ServerApp", "ServerApp\ServerApp.csproj", "{1999BF34-68E2-4D7E-802C-24B6EBDAE15A}"
 EndProject
