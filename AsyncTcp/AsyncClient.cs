@@ -62,9 +62,7 @@ namespace AsyncTcp
                 }
             }
             catch
-            {
-                // Exception driven design I know, but need to work with what I got
-            }
+            { }
             // We stopped receiving bytes, meaning we disconnected
             await ShutDown().ConfigureAwait(false);
             // Wait for keep alive to finish
@@ -100,7 +98,6 @@ namespace AsyncTcp
             {
                 var ipAddress = Dns.GetHostEntry(_hostName).AddressList[0];
 
-                //Trace.WriteLine("hostname : " + _hostName + "   ip : " + ipAddress + "   port : " + _bindPort);
                 await LogMessageAsync(string.Format(HostnameMessage, _hostName, ipAddress, _bindPort)).ConfigureAwait(false);
 
                 remoteEndpoint = new IPEndPoint(ipAddress, _bindPort);
@@ -117,6 +114,7 @@ namespace AsyncTcp
             await socket.ConnectAsync(remoteEndpoint).ConfigureAwait(false);
 
             socket.NoDelay = true;
+
             _serverPeer = new AsyncPeer(socket);
 
             try
@@ -129,14 +127,14 @@ namespace AsyncTcp
 
         public void Stop()
         {
+            _clientRunning = false;
+
             try
             {
                 _serverPeer.Socket.Shutdown(SocketShutdown.Both);
                 _serverPeer.Socket.Close();
             }
             catch { }
-
-            _clientRunning = false;
         }
 
         public async Task ShutDown()
@@ -161,7 +159,7 @@ namespace AsyncTcp
 
         private async Task KeepAlive()
         {
-            int count = _keepAliveInterval;
+            var count = _keepAliveInterval;
             while (_clientRunning)
             {
                 // Send Keep Alives every interval

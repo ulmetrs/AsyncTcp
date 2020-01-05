@@ -37,13 +37,14 @@ namespace AsyncTcp
         {
             _ipAddress = ipAddress;
             _bindPort = bindPort;
+
             if (_ipAddress == null)
             {
                 var ipHostInfo = await Dns.GetHostEntryAsync(Dns.GetHostName()).ConfigureAwait(false);
 
                 foreach (var address in ipHostInfo.AddressList)
                 {
-                    //Break on first IPv4 address.
+                    // Break on first IPv4 address.
                     // InterNetworkV6 for IPv6
                     if (address.AddressFamily == AddressFamily.InterNetwork)
                     {
@@ -61,16 +62,12 @@ namespace AsyncTcp
             _incomingConnectionListener.Listen(100);
 
             _serverRunning = true;
-            // Create a list of tasks
             var tasks = new List<Task>
             {
-                // HUGE NOTE/DISCLAIMER: All Async Methods are run Synchronously until the first await,
-                //  meaning we cant just do this first: tasks.Add(KeepAlive());
-                // Add our Keep Alive Task
                 Task.Run(KeepAlive)
             };
-            // Count our tasks added
-            var taskCount = 0;
+
+            int taskCount = 0;
             Socket socket;
             try
             {
@@ -98,9 +95,8 @@ namespace AsyncTcp
                 }
             }
             catch
-            {
-                // Exception driven design I know, but need to work with what I got
-            }
+            { }
+
             // Wait for all remaining tasks to finish
             await Task.WhenAll(tasks).ConfigureAwait(false);
         }
@@ -108,6 +104,7 @@ namespace AsyncTcp
         private async Task ProcessSocket(Socket socket)
         {
             socket.NoDelay = true;
+
             var peer = new AsyncPeer(socket);
             _peers[peer.PeerId] = peer;
 
@@ -118,10 +115,8 @@ namespace AsyncTcp
             catch (Exception e)
             { await LogErrorAsync(e, PeerConnectedErrorMessage, false).ConfigureAwait(false); }
 
-            // Dedicated buffer for async reads
             var buffer = new byte[_recvBufferSize];
             var segment = new ArraySegment<byte>(buffer, 0, _recvBufferSize);
-            // Use the TaskExtensions for await receive
             int bytesRead;
             try
             {
@@ -135,9 +130,8 @@ namespace AsyncTcp
                 }
             }
             catch
-            {
-                // Exception driven design I know, but need to work with what I got
-            }
+            { }
+
             // Clean up the Peers socket and remove from list of peers
             await RemovePeer(peer).ConfigureAwait(false);
         }
@@ -154,9 +148,7 @@ namespace AsyncTcp
                 _incomingConnectionListener.Close();
             }
             catch
-            {
-                // Do nothing
-            }
+            { }
 
             if (_peers.Count == 0)
                 return;
@@ -186,9 +178,8 @@ namespace AsyncTcp
                     removedPeer.Socket.Close();
                 }
                 catch
-                {
-                    // Do nothing
-                }
+                { }
+
                 // Handler callback for peer disconnected
                 try
                 {
@@ -222,7 +213,7 @@ namespace AsyncTcp
                 {
                     count++;
                 }
-
+                // Check every second for exit
                 await Task.Delay(1000).ConfigureAwait(false);
             }
         }
