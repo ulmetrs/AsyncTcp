@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using static AsyncTcp.Utils;
 using static AsyncTcp.Values;
@@ -18,6 +19,7 @@ namespace AsyncTcp
 
         public AsyncPeer _serverPeer;
         private bool _clientRunning = false;
+        private Channel<Type>
 
         public AsyncClient(
             IAsyncHandler handler,
@@ -29,9 +31,9 @@ namespace AsyncTcp
             _keepAliveInterval = keepAliveInterval;
         }
 
-        public Task SendAsync(int dataType, byte[] data = null)
+        public void Send<T>(int type, T data)
         {
-            return _serverPeer.SendAsync(dataType, data);
+            _serverPeer.Send(type, data);
         }
 
         public async Task Start(string hostname, int bindPort = 9050, bool findDnsMatch = false)

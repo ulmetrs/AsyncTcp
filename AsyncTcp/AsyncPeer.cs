@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Buffers;
 using System.IO;
+using System.IO.Compression;
 using System.Net.Sockets;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using static AsyncTcp.Utils;
 using static AsyncTcp.Values;
@@ -11,39 +13,97 @@ namespace AsyncTcp
 {
     public class AsyncPeer
     {
-        private static long GlobalPeerId;
-        public long PeerId { get; }
-        public Socket Socket;
+        private static long GlobalPeerId = -1;
+        public long PeerId { get; } = Interlocked.Increment(ref GlobalPeerId);
+
+        public Socket Socket { get; }
+        private ISerializer _serializer;
+        private bool _useCompression;
+
+        private Channel<ChannelPacket> SendChannel;
+        private Channel<ChannelPacket> ReceiveChannel;
+
         public MemoryStream Stream;
         public SemaphoreSlim SendLock { get; }
         public int DataType = -1;
         public int DataSize = -1;
 
-        public AsyncPeer(Socket sock)
+        // Peers are constructed from connected sockets
+        public AsyncPeer(Socket socket, ISerializer serializer, bool useCompression = true)
         {
-            Socket = sock;
-            Stream = new MemoryStream();
-            SendLock = new SemaphoreSlim(1, 1);
-            PeerId = Interlocked.Increment(ref GlobalPeerId);
+            Socket = socket;
+            _serializer = serializer;
+            _useCompression = useCompression;
+            SendChannel = Channel.CreateUnbounded<ChannelPacket>();
+            ReceiveChannel = Channel.CreateUnbounded<ChannelPacket>();
+            Task.Run(ProcessSend);
         }
 
-        public async Task SendAsync(int dataType, byte[] data = null)
+        public async Task Send(int type)
         {
-            var dataSize = data?.Length ?? 0;
+            await SendChannel
+                .Writer
+                .WriteAsync(new ChannelPacket() { Type = type, Data = null })
+                .ConfigureAwait(false);
+        }
 
-            var bufferSize = ByteOffsetSize + dataSize;
+        public async Task Send(int type, object data)
+        {
+            await SendChannel
+                .Writer
+                .WriteAsync(new ChannelPacket() { Type = type, Data = data })
+                .ConfigureAwait(false);
+        }
 
-            var buffer = ArrayPool<byte>.Shared.Rent(ByteOffsetSize + dataSize);
+        private async Task ProcessSend()
+        {
+            using (var netStream = new NetworkStream(Socket))
+            {
+                while (true)
+                {
+                    if (await SendChannel.Reader.WaitToReadAsync().ConfigureAwait(false))
+                    {
+                        var packet = await SendChannel.Reader.ReadAsync().ConfigureAwait(false);
 
-            WriteSendBytes(dataType, dataSize, data, buffer);
+                        var bytes = _serializer.Serialize(packet.Data);
 
-            await SendLock.WaitAsync().ConfigureAwait(false);
+                        // TODO utf8json does not actually serialize to stream, so mind as well use the bytes
+                        if (_useCompression)
+                        {
+                            //_serializer.Serialize(packet.Data, )
+                            using (var dataStream = new MemoryStream())
+                            {
+                                _serializer.Serialize(packet.Data, dataStream);
+                                using (var gzipStream = new GZipStream(compressedStream, CompressionMode.Compress))
+                                {
+                                    await gzipStream.WriteAsync(input, 0, input.Length).ConfigureAwait(false);
+                                }
+                                output = compressedStream.ToArray();
+                            }
+                        }
 
-            await SendBufferAsync(bufferSize, buffer).ConfigureAwait(false);
+                        /*
+                        var payload = SharedBytePool.Rent(bytes.Length + SequenceLengthSize);
+                        BitConverter.GetBytes(bytes.Length).CopyTo(payload, 0);
+                        bytes.CopyTo(payload, SequenceLengthSize);
 
-            SendLock.Release();
-
-            ArrayPool<byte>.Shared.Return(buffer);
+                        try
+                        {
+                            await netStream
+                                .WriteAsync(payload, 0, size: bytes.Length + SequenceLengthSize, default)
+                                .ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            if (payload != null)
+                            {
+                                SharedBytePool.Return(payload);
+                            }
+                        }
+                        */
+                    }
+                }
+            }
         }
 
         // TODO convert to task when unity can support writeasync
