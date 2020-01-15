@@ -38,11 +38,14 @@ namespace AsyncTcp
                 if (kv.Key == 0)
                     throw new Exception("Type '0' Reserved for Keep-Alive Packet");
 
-                _methods[kv.Key] = method.MakeGenericMethod(new Type[] { kv.Value });
+                if (kv.Value != null)
+                    _methods[kv.Key] = method.MakeGenericMethod(new Type[] { kv.Value });
+
                 var bytes = new byte[HeaderSize];
                 BitConverter.GetBytes(kv.Key).CopyTo(bytes, 0);
                 HeaderBytes[kv.Key] = bytes;
             }
+
             UseCompression = useCompression;
             Initialized = true;
         }

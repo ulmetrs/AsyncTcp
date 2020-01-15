@@ -207,19 +207,28 @@ namespace AsyncTcp
                             break;
                         }
 
-                        var bytes = buffer.Slice(AsyncTcp.HeaderSize, length).ToArray();
-
-                        if (AsyncTcp.UseCompression)
+                        if (AsyncTcp.HeaderBytes.ContainsKey(type))
                         {
-                            bytes = await DecompressWithGzipAsync(bytes).ConfigureAwait(false);
+                            var bytes = buffer.Slice(AsyncTcp.HeaderSize, length).ToArray();
+
+                            if (AsyncTcp.UseCompression)
+                            {
+                                bytes = await DecompressWithGzipAsync(bytes).ConfigureAwait(false);
+                            }
+
+                            var data = AsyncTcp.Deserialize(type, bytes);
+
+                            await _receiveChannel
+                                .Writer
+                                .WriteAsync(new ChannelPacket() { Type = type, Data = data })
+                                .ConfigureAwait(false);
                         }
-
-                        var data = AsyncTcp.Deserialize(type, bytes);
-
-                        await _receiveChannel
-                            .Writer
-                            .WriteAsync(new ChannelPacket() { Type = type, Data = data })
-                            .ConfigureAwait(false);
+                        else
+                        {
+                            await Logging
+                                .LogMessageAsync("Cannot Receive Packet, Type not Initialized")
+                                .ConfigureAwait(false);
+                        }
 
                         buffer = buffer.Slice(size);
                         pipeReader.AdvanceTo(buffer.Start, buffer.End);
