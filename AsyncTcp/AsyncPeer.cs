@@ -16,8 +16,8 @@ namespace AsyncTcp
 
         private Socket _socket;
         private IAsyncHandler _handler;
-        private Channel<ChannelPacket> _sendChannel;
-        private Channel<ChannelPacket> _receiveChannel;
+        private Channel<ObjectPacket> _sendChannel;
+        private Channel<BytePacket> _receiveChannel;
         private bool _processing;
 
         // Peers are constructed from connected sockets
@@ -27,8 +27,8 @@ namespace AsyncTcp
         {
             _socket = socket;
             _handler = handler;
-            _sendChannel = Channel.CreateUnbounded<ChannelPacket>();
-            _receiveChannel = Channel.CreateUnbounded<ChannelPacket>();
+            _sendChannel = Channel.CreateUnbounded<ObjectPacket>();
+            _receiveChannel = Channel.CreateUnbounded<BytePacket>();
         }
 
         internal async Task Process()
@@ -38,13 +38,14 @@ namespace AsyncTcp
             var receiveTask = Task.Run(ProcessReceive);
             var packetTask = Task.Run(ProcessPacket);
             await Task.WhenAll(sendTask, receiveTask, packetTask).ConfigureAwait(false);
-            // TODO how to dispose of channels?
             _processing = false;
         }
 
         public void ShutDown()
         {
             _processing = false;
+            _sendChannel.Writer.Complete();
+            _receiveChannel.Writer.Complete();
             try
             {
                 _socket.Shutdown(SocketShutdown.Both);
@@ -55,92 +56,74 @@ namespace AsyncTcp
 
         public async Task Send(int type)
         {
-            if (AsyncTcp.HeaderBytes.ContainsKey(type))
-            {
-                await _sendChannel
-                    .Writer
-                    .WriteAsync(new ChannelPacket() { Type = type, Data = null })
-                    .ConfigureAwait(false);
-            }
-            else
-            {
-                await Logging
-                    .LogMessageAsync("Cannot Send Packet, Type not Initialized")
-                    .ConfigureAwait(false);
-            }
+            await _sendChannel
+                .Writer
+                .WriteAsync(new ObjectPacket() { Type = type, Data = null })
+                .ConfigureAwait(false);
         }
 
         public async Task Send(int type, object data)
         {
-            if (AsyncTcp.HeaderBytes.ContainsKey(type))
-            {
-                await _sendChannel
-                    .Writer
-                    .WriteAsync(new ChannelPacket() { Type = type, Data = data })
-                    .ConfigureAwait(false);
-            }
-            else
-            {
-                await Logging
-                    .LogMessageAsync("Cannot Send Packet, Type not Initialized")
-                    .ConfigureAwait(false);
-            }
+            await _sendChannel
+                .Writer
+                .WriteAsync(new ObjectPacket() { Type = type, Data = data })
+                .ConfigureAwait(false);
         }
 
         private async Task ProcessSend()
         {
             using (var netStream = new NetworkStream(_socket))
             {
-                while (_processing)
+                while (_processing && await _sendChannel.Reader.WaitToReadAsync().ConfigureAwait(false))
                 {
-                    if (await _sendChannel.Reader.WaitToReadAsync().ConfigureAwait(false))
+                    var packet = await _sendChannel.Reader.ReadAsync().ConfigureAwait(false);
+
+                    if (packet.Data == null)
                     {
-                        var packet = await _sendChannel.Reader.ReadAsync().ConfigureAwait(false);
-
-                        if (packet.Data == null)
+                        try
                         {
-                            try
-                            {
-                                await netStream
-                                    .WriteAsync(AsyncTcp.HeaderBytes[packet.Type], AsyncTcp.TypeOffset, AsyncTcp.HeaderSize)
-                                    .ConfigureAwait(false);
-                            }
-                            catch
-                            {
-                                ShutDown();
-                                break;
-                            }
+                            await netStream
+                                .WriteAsync(AsyncTcp.HeaderBytes(packet.Type), AsyncTcp.ZeroOffset, AsyncTcp.HeaderSize)
+                                .ConfigureAwait(false);
                         }
-                        else
+                        catch
                         {
-                            var bytes = AsyncTcp.Serialize(packet.Data);
+                            ShutDown();
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        var useCompression = false;
+                        var bytes = AsyncTcp.Serializer.Serialize(packet.Data);
 
-                            if (AsyncTcp.UseCompression)
-                            {
-                                bytes = await CompressWithGzipAsync(bytes).ConfigureAwait(false);
-                            }
+                        if (AsyncTcp.UseCompression && bytes.Length < AsyncTcp.CompressionCuttoff)
+                        {
+                            useCompression = true;
+                            bytes = await CompressWithGzipAsync(bytes).ConfigureAwait(false);
+                        }
 
-                            var size = AsyncTcp.HeaderSize + bytes.Length;
-                            var buffer = ArrayPool<byte>.Shared.Rent(size);
-                            BitConverter.GetBytes(packet.Type).CopyTo(buffer, AsyncTcp.TypeOffset);
-                            BitConverter.GetBytes(bytes.Length).CopyTo(buffer, AsyncTcp.LengthOffset);
-                            bytes.CopyTo(buffer, AsyncTcp.HeaderSize);
+                        var size = AsyncTcp.HeaderSize + bytes.Length;
+                        var buffer = ArrayPool<byte>.Shared.Rent(size);
+                        BitConverter.GetBytes(packet.Type).CopyTo(buffer, AsyncTcp.TypeOffset);
+                        BitConverter.GetBytes(bytes.Length).CopyTo(buffer, AsyncTcp.LengthOffset);
+                        BitConverter.GetBytes(useCompression).CopyTo(buffer, AsyncTcp.CompressedOffset);
+                        bytes.CopyTo(buffer, AsyncTcp.HeaderSize);
 
-                            try
-                            {
-                                await netStream
-                                    .WriteAsync(buffer, AsyncTcp.TypeOffset, size)
-                                    .ConfigureAwait(false);
-                            }
-                            catch
-                            {
-                                ShutDown();
-                                break;
-                            }
-                            finally
-                            {
-                                ArrayPool<byte>.Shared.Return(buffer);
-                            }
+                        try
+                        {
+                            await netStream
+                                .WriteAsync(buffer, AsyncTcp.TypeOffset, size)
+                                .ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            ShutDown();
+                            break;
+                        }
+                        finally
+                        {
+                            ArrayPool<byte>.Shared.Return(buffer);
                         }
                     }
                 }
@@ -179,19 +162,18 @@ namespace AsyncTcp
                     {
                         if (buffer.Length < AsyncTcp.HeaderSize)
                         {
-                            // FIXME do we need to advance in this scenario or can we just break?
-                            pipeReader.AdvanceTo(buffer.Start, buffer.End);
                             break;
                         }
 
                         var type = BitConverter.ToInt32(buffer.Slice(AsyncTcp.TypeOffset, AsyncTcp.IntSize).ToArray(), AsyncTcp.ZeroOffset);
                         var length = BitConverter.ToInt32(buffer.Slice(AsyncTcp.LengthOffset, AsyncTcp.IntSize).ToArray(), AsyncTcp.ZeroOffset);
+                        var compressed = BitConverter.ToBoolean(buffer.Slice(AsyncTcp.CompressedOffset, AsyncTcp.BoolSize).ToArray(), AsyncTcp.ZeroOffset);
 
                         if (length == 0)
                         {
                             await _receiveChannel
                                 .Writer
-                                .WriteAsync(new ChannelPacket() { Type = type, Data = null })
+                                .WriteAsync(new BytePacket() { Type = type, Compressed = false, Bytes = null })
                                 .ConfigureAwait(false);
 
                             buffer = buffer.Slice(AsyncTcp.HeaderSize, buffer.End);
@@ -200,35 +182,19 @@ namespace AsyncTcp
                         }
 
                         var size = AsyncTcp.HeaderSize + length;
+
                         if (size > buffer.Length)
                         {
-                            // FIXME do we need to advance in this scenario or can we just break?
-                            pipeReader.AdvanceTo(buffer.Start, buffer.End);
                             break;
                         }
 
-                        if (AsyncTcp.HeaderBytes.ContainsKey(type))
-                        {
-                            var bytes = buffer.Slice(AsyncTcp.HeaderSize, length).ToArray();
+                        var bytes = buffer.Slice(AsyncTcp.HeaderSize, length).ToArray();
 
-                            if (AsyncTcp.UseCompression)
-                            {
-                                bytes = await DecompressWithGzipAsync(bytes).ConfigureAwait(false);
-                            }
-
-                            var data = AsyncTcp.Deserialize(type, bytes);
-
-                            await _receiveChannel
-                                .Writer
-                                .WriteAsync(new ChannelPacket() { Type = type, Data = data })
-                                .ConfigureAwait(false);
-                        }
-                        else
-                        {
-                            await Logging
-                                .LogMessageAsync("Cannot Receive Packet, Type not Initialized")
-                                .ConfigureAwait(false);
-                        }
+                        // Move the bytes for processing out of the way of the pipereader
+                        await _receiveChannel
+                            .Writer
+                            .WriteAsync(new BytePacket() { Type = type, Compressed = compressed, Bytes = bytes })
+                            .ConfigureAwait(false);
 
                         buffer = buffer.Slice(size);
                         pipeReader.AdvanceTo(buffer.Start, buffer.End);
@@ -239,22 +205,28 @@ namespace AsyncTcp
 
         private async Task ProcessPacket()
         {
-            while (_processing)
+            while (_processing && await _receiveChannel.Reader.WaitToReadAsync().ConfigureAwait(false))
             {
-                if (await _receiveChannel.Reader.WaitToReadAsync().ConfigureAwait(false))
-                {
-                    var packet = await _receiveChannel.Reader.ReadAsync().ConfigureAwait(false);
+                var packet = await _receiveChannel.Reader.ReadAsync().ConfigureAwait(false);
 
-                    try
-                    {
-                        await _handler.PacketReceived(this, packet.Type, packet.Data).ConfigureAwait(false);
-                    }
-                    catch (Exception e)
-                    {
-                        await Logging
-                            .LogErrorAsync(e, "Error Processing Packet")
-                            .ConfigureAwait(false);
-                    }
+                var bytes = packet.Bytes;
+
+                if (packet.Compressed)
+                {
+                    bytes = await DecompressWithGzipAsync(bytes).ConfigureAwait(false);
+                }
+
+                var data = AsyncTcp.Serializer.Deserialize(packet.Type, bytes);
+
+                try
+                {
+                    await _handler.PacketReceived(this, packet.Type, data).ConfigureAwait(false);
+                }
+                catch (Exception e)
+                {
+                    await Logging
+                        .LogErrorAsync(e, "Error Processing Packet")
+                        .ConfigureAwait(false);
                 }
             }
         }

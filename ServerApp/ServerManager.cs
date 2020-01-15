@@ -5,13 +5,14 @@ using System.Threading.Tasks;
 
 namespace ServerApp
 {
-    public class ServerManager : IAsyncHandler
+    public class ServerManager : IAsyncHandler, ISerializer
     {
         public AsyncServer AsyncServer { get; }
 
         public ServerManager()
         {
-            AsyncServer = new AsyncServer(this, 10);
+            AsyncTcp.AsyncTcp.Initialize(this);
+            AsyncServer = new AsyncServer(this);
         }
 
         public Task Start()
@@ -41,6 +42,20 @@ namespace ServerApp
             await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) Received Message: {message.index}").ConfigureAwait(false);
 
             await peer.Send(type, message);
+        }
+
+        public byte[] Serialize(object obj)
+        {
+            return Utf8Json.JsonSerializer.Serialize(obj);
+        }
+
+        public object Deserialize(int type, byte[] bytes)
+        {
+            if (type == 1)
+            {
+                return Utf8Json.JsonSerializer.Deserialize<TestMessage>(bytes);
+            }
+            return null;
         }
     }
 }

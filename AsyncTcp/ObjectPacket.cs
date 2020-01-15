@@ -1,6 +1,6 @@
 ﻿namespace AsyncTcp
 {
-    public class ChannelPacket
+    public class ObjectPacket
     {
         public int Type { get; set; }
         public object Data { get; set; }

@@ -1,35 +1,40 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Reflection;
 
 namespace AsyncTcp
 {
     public static class AsyncTcp
     {
-        internal const int ZeroOffset = 0;
+        internal const int BoolSize = 1;
         internal const int IntSize = 4;
+        internal const int ZeroOffset = 0;
         internal const int TypeOffset = 0;
         internal const int LengthOffset = 4;
-        internal const int HeaderSize = 8;
+        internal const int CompressedOffset = 8;
+        internal const int HeaderSize = 9;
+        internal const int CompressionCuttoff = 860; // 1000, 1500 ???
 
-        internal static IDictionary<int, byte[]> HeaderBytes;
+        internal static ISerializer Serializer;
         internal static bool UseCompression;
-        internal static bool Initialized;
-
-        private static ISerializer _serializer;
-        private static IDictionary<int, MethodInfo> _methods;
+        internal static bool IsInitialized;
+        
+        private static IDictionary<int, byte[]> _headerBytes;
 
         // Throw Exception on Client and Server if we try to create with initializing
         public static void Initialize(
             ISerializer serializer,
-            IDictionary<int, Type> typeMap,
             bool useCompression = true)
         {
-            _serializer = serializer;
-            _methods = new Dictionary<int, MethodInfo>();
-            HeaderBytes = new Dictionary<int, byte[]>();
-            HeaderBytes[0] = new byte[8];
+            Serializer = serializer;
+            UseCompression = useCompression;
 
+            _headerBytes = new Dictionary<int, byte[]>();
+            _headerBytes[0] = new byte[8];
+
+            IsInitialized = true;
+
+            /*
+             _methods = new Dictionary<int, MethodInfo>();
             // Use reflection to get the deserialize method info of the provided serializer
             var method = serializer.GetType().GetMethod("Deserialize");
 
@@ -45,11 +50,10 @@ namespace AsyncTcp
                 BitConverter.GetBytes(kv.Key).CopyTo(bytes, 0);
                 HeaderBytes[kv.Key] = bytes;
             }
-
-            UseCompression = useCompression;
-            Initialized = true;
+            */
         }
 
+        /*
         public static byte[] Serialize(object data)
         {
             return _serializer.Serialize(data);
@@ -57,7 +61,21 @@ namespace AsyncTcp
 
         public static object Deserialize(int type, byte[] bytes)
         {
-            return _methods[type].Invoke(_serializer, new object[] { bytes });
+            //return _methods[type].Invoke(_serializer, new object[] { bytes });
+            return _serializer.Deserialize(type, bytes);
+        }
+        */
+
+        // Lazy Memoize our Zero Length Headers
+        public static byte[] HeaderBytes(int type)
+        {
+            if (_headerBytes.TryGetValue(type, out var bytes))
+            {
+                return bytes;
+            }
+            _headerBytes[type] = new byte[HeaderSize];
+            BitConverter.GetBytes(type).CopyTo(_headerBytes[type], ZeroOffset);
+            return _headerBytes[type];
         }
     }
 }

@@ -4,12 +4,61 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 
 namespace AsyncTcp
 {
     public static class Utils
     {
+        public static async Task<IPAddress> GetIPAddress(string hostName = null, bool findDnsMatch = false)
+        {
+            IPHostEntry ipHostInfo;
+            // If Hostname == null we want to find the local host address
+            if (hostName == null)
+            {
+                ipHostInfo = await Dns.GetHostEntryAsync(Dns.GetHostName()).ConfigureAwait(false);
+                // Try to return the first IPv4 Address
+                foreach (var address in ipHostInfo.AddressList)
+                {
+                    // Break on first IPv4 address.
+                    // InterNetworkV6 for IPv6
+                    if (address.AddressFamily == AddressFamily.InterNetwork)
+                    {
+                        return address;
+                    }
+                }
+                // Else return the first address
+                if (ipHostInfo.AddressList.Length > 0)
+                {
+                    return ipHostInfo.AddressList[0];
+                }
+                // Else return null
+                return null;
+            }
+
+            ipHostInfo = await Dns.GetHostEntryAsync(hostName).ConfigureAwait(false);
+            if (findDnsMatch)
+            {
+                // Try to return the first matching address
+                foreach (var address in ipHostInfo.AddressList)
+                {
+                    if (address.ToString() == hostName)
+                    {
+                        return address;
+                    }
+                }
+            }
+            // Else return the first address
+            if (ipHostInfo.AddressList.Length > 0)
+            {
+                return ipHostInfo.AddressList[0];
+            }
+            // Else return null
+            return null;
+        }
+
         public static async Task<byte[]> CompressWithGzipAsync(byte[] input)
         {
             byte[] output = null;

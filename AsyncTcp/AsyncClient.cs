@@ -11,18 +11,17 @@ namespace AsyncTcp
     {
         private readonly IAsyncHandler _handler;
         private readonly int _keepAliveInterval;
+        private AsyncPeer _serverPeer;
 
-        private string _hostName;
-        private int _bindPort;
+        private bool _clientRunning;
 
-        public AsyncPeer _serverPeer;
-        private bool _clientRunning = false;
+        public string HostName { get; private set; }
 
         public AsyncClient(
             IAsyncHandler handler,
             int keepAliveInterval = 10)
         {
-            if (!AsyncTcp.Initialized)
+            if (!AsyncTcp.IsInitialized)
                 throw new Exception("AsyncTcp must be initialized before creating a client");
 
             _handler = handler ?? throw new Exception("Handler cannot be null");
@@ -34,91 +33,58 @@ namespace AsyncTcp
             return _serverPeer.Send(type, data);
         }
 
-        public async Task Start(string hostname, int bindPort = 9050, bool findDnsMatch = false)
+        public async Task Start(string hostName, int bindPort = 9050, bool findDnsMatch = false)
         {
-            _hostName = hostname;
-            _bindPort = bindPort;
+            var address = await Utils.GetIPAddress(hostName, findDnsMatch).ConfigureAwait(false);
 
-            _serverPeer = await CreateAndConnectServerPeerAsync(findDnsMatch).ConfigureAwait(false);
+            var remoteEndpoint = new IPEndPoint(address, bindPort);
+            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            socket.NoDelay = true;
+            await socket.ConnectAsync(remoteEndpoint).ConfigureAwait(false);
 
-            // Set client running
+            HostName = address.ToString();
+
             _clientRunning = true;
-            // Start our keep-alive thread
+
+            _serverPeer = new AsyncPeer(socket, _handler);
+
+            try
+            {
+                await _handler.PeerConnected(_serverPeer).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                await LogErrorAsync(e, PeerConnectedErrorMessage, false).ConfigureAwait(false);
+            }
+
             var keepAlive = Task.Run(KeepAlive);
-            // Dedicated buffer for async reads
+
             await _serverPeer.Process().ConfigureAwait(false);
-            // We stopped receiving bytes, meaning we disconnected
+
             await ShutDown().ConfigureAwait(false);
-            // Wait for keep alive to finish
+
             await keepAlive.ConfigureAwait(false);
         }
 
-        private async Task<(Socket, IPEndPoint)> BuildSocketAndEndpoint(bool findDnsMatch)
-        {
-            Socket socket = null;
-            IPEndPoint remoteEndpoint = null;
-
-            if (findDnsMatch)
-            {
-                var ipHostInfo = Dns.GetHostEntry(_hostName);
-
-                foreach (var address in ipHostInfo.AddressList)
-                {
-                    // Break on first IPv4 address.
-                    // InterNetworkV6 for IPv6
-                    if (address.ToString() == _hostName)
-                    {
-                        remoteEndpoint = new IPEndPoint(address, _bindPort);
-                        socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-                        break;
-                    }
-                }
-            }
-
-            // Default Scenario:
-            // If Socket is still not defined, acquire first IPAddreses resolved by DNS and attempt connection
-            // that way.
-            if (socket == null)
-            {
-                var ipAddress = Dns.GetHostEntry(_hostName).AddressList[0];
-
-                await LogMessageAsync(string.Format(HostnameMessage, _hostName, ipAddress, _bindPort)).ConfigureAwait(false);
-
-                remoteEndpoint = new IPEndPoint(ipAddress, _bindPort);
-                socket = new Socket(ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            }
-
-            return (socket, remoteEndpoint);
-        }
-
-        private async Task<AsyncPeer> CreateAndConnectServerPeerAsync(bool findDnsMatch)
-        {
-            (Socket socket, IPEndPoint remoteEndpoint) = await BuildSocketAndEndpoint(findDnsMatch).ConfigureAwait(false);
-
-            await socket.ConnectAsync(remoteEndpoint).ConfigureAwait(false);
-
-            var peer = new AsyncPeer(socket, _handler);
-
-            try
-            { await _handler.PeerConnected(peer).ConfigureAwait(false); }
-            catch (Exception e)
-            { await LogErrorAsync(e, PeerConnectedErrorMessage, false).ConfigureAwait(false); }
-
-            return peer;
-        }
+        
 
         public async Task ShutDown()
         {
             _clientRunning = false;
+
             if (_serverPeer != null)
             {
                 _serverPeer.ShutDown();
 
                 try
-                { await _handler.PeerDisconnected(_serverPeer).ConfigureAwait(false); }
+                {
+                    await _handler.PeerDisconnected(_serverPeer).ConfigureAwait(false);
+                }
                 catch (Exception e)
-                { await LogErrorAsync(e, PeerRemovedErrorMessage).ConfigureAwait(false); }
-
+                {
+                    await LogErrorAsync(e, PeerRemovedErrorMessage).ConfigureAwait(false);
+                }
+                
                 _serverPeer = null;
             }
         }

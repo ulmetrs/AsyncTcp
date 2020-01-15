@@ -7,9 +7,8 @@ namespace ClientApp
     {
         public static async Task Main(string[] args)
         {
-            var scenarios = new Scenarios("192.168.99.1");
-            await scenarios.RunDataScenarioAsync().ConfigureAwait(false);
-
+            var scenarios = new Scenarios("10.0.75.1");
+            await scenarios.RunKeepAliveScenarioAsync(1).ConfigureAwait(false);
             await Console.In.ReadLineAsync().ConfigureAwait(false);
         }
     }
