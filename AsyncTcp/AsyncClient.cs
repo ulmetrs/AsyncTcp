@@ -1,9 +1,8 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading.Channels;
 using System.Threading.Tasks;
-using static AsyncTcp.Utils;
+using static AsyncTcp.Logging;
 using static AsyncTcp.Values;
 
 namespace AsyncTcp
@@ -11,7 +10,6 @@ namespace AsyncTcp
     public class AsyncClient
     {
         private readonly IAsyncHandler _handler;
-        private readonly int _recvBufferSize;
         private readonly int _keepAliveInterval;
 
         private string _hostName;
@@ -19,21 +17,21 @@ namespace AsyncTcp
 
         public AsyncPeer _serverPeer;
         private bool _clientRunning = false;
-        private Channel<Type>
 
         public AsyncClient(
             IAsyncHandler handler,
-            int recvBufferSize = 1024,
             int keepAliveInterval = 10)
         {
+            if (!AsyncTcp.Initialized)
+                throw new Exception("AsyncTcp must be initialized before creating a client");
+
             _handler = handler ?? throw new Exception("Handler cannot be null");
-            _recvBufferSize = recvBufferSize;
             _keepAliveInterval = keepAliveInterval;
         }
 
-        public void Send<T>(int type, T data)
+        public Task Send(int type, object data)
         {
-            _serverPeer.Send(type, data);
+            return _serverPeer.Send(type, data);
         }
 
         public async Task Start(string hostname, int bindPort = 9050, bool findDnsMatch = false)
@@ -48,25 +46,11 @@ namespace AsyncTcp
             // Start our keep-alive thread
             var keepAlive = Task.Run(KeepAlive);
             // Dedicated buffer for async reads
-            var buffer = new byte[_recvBufferSize];
-            var segment = new ArraySegment<byte>(buffer, 0, _recvBufferSize);
-            // Use the TaskExtensions for await receive
-            int bytesRead;
-            try
-            {
-                while ((bytesRead = await _serverPeer.Socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
-                {
-                    // Process the bytes that we do have, could be an entire message, a partial message split because of tcp,
-                    // or partial message split because of buffer size
-                    await _serverPeer.ProcessBytes(buffer, bytesRead, _handler).ConfigureAwait(false);
-                }
-            }
-            catch
-            { }
+            await _serverPeer.Process().ConfigureAwait(false);
             // We stopped receiving bytes, meaning we disconnected
             await ShutDown().ConfigureAwait(false);
             // Wait for keep alive to finish
-            await Task.WhenAll(keepAlive).ConfigureAwait(false);
+            await keepAlive.ConfigureAwait(false);
         }
 
         private async Task<(Socket, IPEndPoint)> BuildSocketAndEndpoint(bool findDnsMatch)
@@ -113,9 +97,7 @@ namespace AsyncTcp
 
             await socket.ConnectAsync(remoteEndpoint).ConfigureAwait(false);
 
-            socket.NoDelay = true;
-
-            var peer = new AsyncPeer(socket);
+            var peer = new AsyncPeer(socket, _handler);
 
             try
             { await _handler.PeerConnected(peer).ConfigureAwait(false); }
@@ -125,28 +107,12 @@ namespace AsyncTcp
             return peer;
         }
 
-        public void Stop()
-        {
-            _clientRunning = false;
-
-            try
-            {
-                _serverPeer.Socket.Shutdown(SocketShutdown.Both);
-                _serverPeer.Socket.Close();
-            }
-            catch { }
-        }
-
         public async Task ShutDown()
         {
+            _clientRunning = false;
             if (_serverPeer != null)
             {
-                try
-                {
-                    _serverPeer.Socket.Shutdown(SocketShutdown.Both);
-                    _serverPeer.Socket.Close();
-                }
-                catch { }
+                _serverPeer.ShutDown();
 
                 try
                 { await _handler.PeerDisconnected(_serverPeer).ConfigureAwait(false); }
@@ -165,7 +131,7 @@ namespace AsyncTcp
                 // Send Keep Alives every interval
                 if (count == _keepAliveInterval)
                 {
-                    await _serverPeer.SendKeepAliveAsync().ConfigureAwait(false);
+                    await _serverPeer.Send(0).ConfigureAwait(false);
                     count = 0;
                 }
                 else

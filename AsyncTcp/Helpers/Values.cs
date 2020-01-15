@@ -2,9 +2,6 @@
 {
     public static class Values
     {
-        public const int ByteOffsetSize = 8;
-        public static byte[] KABytes { get; } = new byte[8];
-
         // String Error Messages
         public const string ParseReceiveErrorMessage = "Data Received Error: {0}";
         public const string SendErrorMessage = "Send Error: {0}";

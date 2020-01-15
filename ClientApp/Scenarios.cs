@@ -61,9 +61,7 @@ namespace ClientApp
                     index = i,
                     data = _xorShifter.GetRandomBytes(5000),
                 };
-                var bytes = Utf8Json.JsonSerializer.Serialize(letter);
-                var compressed = await AsyncTcp.Utils.CompressWithGzipAsync(bytes).ConfigureAwait(false);
-                await client.AsyncClient.SendAsync(1, compressed).ConfigureAwait(false);
+                await client.AsyncClient.Send(1, letter).ConfigureAwait(false);
                 await Task.Delay(_random.Next(1, 3) * 1000);
             }
         }

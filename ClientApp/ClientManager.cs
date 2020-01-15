@@ -13,7 +13,7 @@ namespace ClientApp
         public ClientManager(string serverHostName)
         {
             ServerHostName = serverHostName;
-            AsyncClient = new AsyncClient(this, 1024, 10);
+            AsyncClient = new AsyncClient(this, 10);
         }
 
         public Task Start()
@@ -21,9 +21,9 @@ namespace ClientApp
             return AsyncClient.Start(ServerHostName, 9050, true);
         }
 
-        public void Shutdown()
+        public Task Shutdown()
         {
-            AsyncClient.Stop();
+            return AsyncClient.ShutDown();
         }
 
         public async Task PeerConnected(AsyncPeer peer)
@@ -36,10 +36,9 @@ namespace ClientApp
             await Console.Out.WriteLineAsync($"Client (PeerId: {peer.PeerId}) disconnected...").ConfigureAwait(false);
         }
 
-        public async Task DataReceived(AsyncPeer peer, int dataType, byte[] data)
+        public async Task PacketReceived(AsyncPeer peer, int type, object packet)
         {
-            var bytes = await AsyncTcp.Utils.DecompressWithGzipAsync(data).ConfigureAwait(false);
-            var message = Utf8Json.JsonSerializer.Deserialize<TestMessage>(bytes);
+            var message = (TestMessage)packet;
 
             await Console.Out.WriteLineAsync($"Client (PeerId: {peer.PeerId}) Received Message: {message.index}").ConfigureAwait(false);
         }

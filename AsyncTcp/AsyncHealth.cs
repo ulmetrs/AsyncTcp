@@ -2,7 +2,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
-using static AsyncTcp.Utils;
+using static AsyncTcp.Logging;
 using static AsyncTcp.Values;
 
 namespace AsyncTcp
@@ -14,12 +14,7 @@ namespace AsyncTcp
         private IPAddress _ipAddress;
         private int _bindPort;
         private Socket _listener;
-        private bool _serverRunning = false;
-
-        public AsyncHealth()
-        {
-            // Nothing
-        }
+        private bool _serverRunning;
 
         public async Task Start(IPAddress ipAddress = null, int bindPort = 9050)
         {
@@ -57,17 +52,16 @@ namespace AsyncTcp
             }
         }
 
-        public void Stop()
+        public void ShutDown()
         {
             _serverRunning = false;
-
             try
             {
                 _listener.Shutdown(SocketShutdown.Both);
                 _listener.Close();
             }
             catch (Exception e)
-            { LogError(e, null, false); }
+            { LogError(e, null); }
         }
     }
 }

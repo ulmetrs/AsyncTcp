@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
-using static AsyncTcp.Utils;
+using static AsyncTcp.Logging;
 using static AsyncTcp.Values;
 
 namespace AsyncTcp
@@ -12,24 +12,26 @@ namespace AsyncTcp
     public class AsyncServer
     {
         private readonly IAsyncHandler _handler;
-        private readonly int _recvBufferSize;
         private readonly int _keepAliveInterval;
         private readonly int _taskCleanupInterval = 100;
 
         private IPAddress _ipAddress;
         private int _bindPort;
-        private Socket _incomingConnectionListener;
+
+        private Socket _listener;
         private bool _serverRunning;
         private readonly ConcurrentDictionary<long, AsyncPeer> _peers = new ConcurrentDictionary<long, AsyncPeer>();
+
         public string ServerHostName { get; private set; }
 
         public AsyncServer(
             IAsyncHandler handler,
-            int recvBufferSize = 1024,
             int keepAliveInterval = 10)
         {
+            if (!AsyncTcp.Initialized)
+                throw new Exception("AsyncTcp must be initialized before creating a client");
+
             _handler = handler ?? throw new Exception("Handler cannot be null");
-            _recvBufferSize = recvBufferSize;
             _keepAliveInterval = keepAliveInterval;
         }
 
@@ -57,9 +59,9 @@ namespace AsyncTcp
 
             await LogMessageAsync(string.Format(HostnameMessage, ServerHostName, ipAddress, _bindPort)).ConfigureAwait(false);
 
-            _incomingConnectionListener = new Socket(_ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            _incomingConnectionListener.Bind(new IPEndPoint(_ipAddress, _bindPort));
-            _incomingConnectionListener.Listen(100);
+            _listener = new Socket(_ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            _listener.Bind(new IPEndPoint(_ipAddress, _bindPort));
+            _listener.Listen(100);
 
             _serverRunning = true;
             var tasks = new List<Task>
@@ -72,7 +74,7 @@ namespace AsyncTcp
             try
             {
                 // Accept all connections while server running
-                while (_serverRunning && (socket = await _incomingConnectionListener.AcceptAsync().ConfigureAwait(false)) != null)
+                while (_serverRunning && (socket = await _listener.AcceptAsync().ConfigureAwait(false)) != null)
                 {
                     // Add Async Task Process Socket, this task will handle the new connection until it closes
                     tasks.Add(ProcessSocket(socket));
@@ -103,9 +105,7 @@ namespace AsyncTcp
 
         private async Task ProcessSocket(Socket socket)
         {
-            socket.NoDelay = true;
-
-            var peer = new AsyncPeer(socket);
+            var peer = new AsyncPeer(socket, _handler);
             _peers[peer.PeerId] = peer;
 
             try
@@ -115,26 +115,12 @@ namespace AsyncTcp
             catch (Exception e)
             { await LogErrorAsync(e, PeerConnectedErrorMessage, false).ConfigureAwait(false); }
 
-            var buffer = new byte[_recvBufferSize];
-            var segment = new ArraySegment<byte>(buffer, 0, _recvBufferSize);
-            int bytesRead;
-            try
-            {
-                while (_serverRunning && (bytesRead = await peer.Socket.ReceiveAsync(segment, 0).ConfigureAwait(false)) > 0)
-                {
-                    // Process the bytes that we do have, could be an entire message, a partial message split because of tcp,
-                    // or partial message split because of buffer size
-                    await peer.ProcessBytes(buffer, bytesRead, _handler).ConfigureAwait(false);
-                }
-            }
-            catch
-            { }
+            await peer.Process().ConfigureAwait(false);
 
-            // Clean up the Peers socket and remove from list of peers
             await RemovePeer(peer).ConfigureAwait(false);
         }
 
-        public void Stop()
+        public void ShutDown()
         {
             // Turn off server running flag
             _serverRunning = false;
@@ -142,8 +128,8 @@ namespace AsyncTcp
             // Send Kill Signal to the Listener Socket
             try
             {
-                _incomingConnectionListener.Shutdown(SocketShutdown.Both);
-                _incomingConnectionListener.Close();
+                _listener.Shutdown(SocketShutdown.Both);
+                _listener.Close();
             }
             catch
             { }
@@ -154,12 +140,7 @@ namespace AsyncTcp
             // Send Kill Signals to the Peer Sockets
             foreach (var kvp in _peers)
             {
-                try
-                {
-                    kvp.Value.Socket.Shutdown(SocketShutdown.Both);
-                    kvp.Value.Socket.Close();
-                }
-                catch { }
+                kvp.Value.ShutDown();
             }
         }
 
@@ -170,13 +151,7 @@ namespace AsyncTcp
             if (_peers.TryRemove(peer.PeerId, out AsyncPeer removedPeer))
             {
                 // Close the socket on our end
-                try
-                {
-                    removedPeer.Socket.Shutdown(SocketShutdown.Both);
-                    removedPeer.Socket.Close();
-                }
-                catch
-                { }
+                removedPeer.ShutDown();
 
                 // Handler callback for peer disconnected
                 try
@@ -202,7 +177,7 @@ namespace AsyncTcp
 
                     async Task SendKeepAliveAsync(KeyValuePair<long, AsyncPeer> keyValuePair)
                     {
-                        await keyValuePair.Value.SendKeepAliveAsync().ConfigureAwait(false);
+                        await keyValuePair.Value.Send(0).ConfigureAwait(false);
                     }
 
                     await _peers.ParallelForEachAsync(SendKeepAliveAsync, 24).ConfigureAwait(false);
