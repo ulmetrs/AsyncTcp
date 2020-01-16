@@ -2,6 +2,7 @@
 using System.Buffers;
 using System.IO.Pipelines;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -98,7 +99,7 @@ namespace AsyncTcp
                         while (bytesSent < AsyncTcp.HeaderSize)
                         {
                             bytesSent += await _socket
-                                .SendAsync(AsyncTcp.HeaderBytes(packet.Type).AsMemory(bytesSent, AsyncTcp.HeaderSize - bytesSent), SocketFlags.None)
+                                .SendAsync(new ArraySegment<byte>(AsyncTcp.HeaderBytes(packet.Type), bytesSent, AsyncTcp.HeaderSize - bytesSent), SocketFlags.None)
                                 .ConfigureAwait(false);
                         }
                     }
@@ -131,7 +132,7 @@ namespace AsyncTcp
                         while (bytesSent < size)
                         {
                             bytesSent += await _socket
-                                .SendAsync(buffer.AsMemory(bytesSent, size - bytesSent), SocketFlags.None)
+                                .SendAsync(new ArraySegment<byte>(buffer, bytesSent, size - bytesSent), SocketFlags.None)
                                 .ConfigureAwait(false);
                         }
                     }
@@ -159,7 +160,7 @@ namespace AsyncTcp
 
                 try
                 {
-                    bytesRead = await _socket.ReceiveAsync(memory, SocketFlags.None).ConfigureAwait(false);
+                    bytesRead = await _socket.ReceiveAsync(memory.GetArray(), SocketFlags.None);
                     if (bytesRead == 0)
                     {
                         break;
@@ -279,6 +280,23 @@ namespace AsyncTcp
                     await LogErrorAsync(e, ReceiveErrorMessage, true).ConfigureAwait(false);
                 }
             }
+        }
+    }
+
+    public static class BufferExtensions
+    {
+        public static ArraySegment<byte> GetArray(this Memory<byte> memory)
+        {
+            return ((ReadOnlyMemory<byte>)memory).GetArray();
+        }
+
+        public static ArraySegment<byte> GetArray(this ReadOnlyMemory<byte> memory)
+        {
+            if (!MemoryMarshal.TryGetArray(memory, out var result))
+            {
+                throw new InvalidOperationException("Buffer backed by array was expected");
+            }
+            return result;
         }
     }
 }
