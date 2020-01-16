@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Net;
 using System.Threading.Tasks;
 
 namespace ClientApp
@@ -7,9 +8,9 @@ namespace ClientApp
     {
         public static async Task Main(string[] args)
         {
-            var scenarios = new Scenarios("192.168.99.1");
-            await scenarios.RunDataScenarioAsync().ConfigureAwait(false);
-
+            var scenarios = new ClientScenarios(IPAddress.Loopback);
+            //await scenarios.RunKeepAliveScenarioAsync(20).ConfigureAwait(false);
+            await scenarios.RunDataScenarioAsync(100).ConfigureAwait(false);
             await Console.In.ReadLineAsync().ConfigureAwait(false);
         }
     }

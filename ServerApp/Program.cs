@@ -1,12 +1,15 @@
-﻿namespace ServerApp
+﻿using System;
+using System.Threading.Tasks;
+
+namespace ServerApp
 {
-    class Program
+    public static class Program
     {
-        static void Main(string[] args)
+        public static async Task Main(string[] args)
         {
-            var manager = new ServerManager();
-            var serverTask = manager.Start();
-            serverTask.Wait();
+            var scenarios = new ServerScenarios();
+            await scenarios.RunServer().ConfigureAwait(false);
+            await Console.In.ReadLineAsync().ConfigureAwait(false);
         }
     }
 }
