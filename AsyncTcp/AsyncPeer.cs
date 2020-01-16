@@ -263,12 +263,19 @@ namespace AsyncTcp
 
                 if (bytes != null)
                 {
-                    if (packet.Compressed)
+                    try
                     {
-                        bytes = await DecompressWithGzipAsync(bytes).ConfigureAwait(false);
-                    }
+                        if (packet.Compressed)
+                        {
+                            bytes = await DecompressWithGzipAsync(bytes).ConfigureAwait(false);
+                        }
 
-                    data = AsyncTcp.Serializer.Deserialize(packet.Type, bytes);
+                        data = AsyncTcp.Serializer.Deserialize(packet.Type, bytes);
+                    }
+                    catch (Exception e)
+                    {
+                        await LogErrorAsync(e, ReceiveErrorMessage, true).ConfigureAwait(false);
+                    }
                 }
 
                 try
