@@ -113,7 +113,7 @@ namespace AsyncTcp
                     var useCompression = false;
                     var bytes = AsyncTcp.Serializer.Serialize(packet.Data);
 
-                    if (AsyncTcp.UseCompression && bytes.Length < AsyncTcp.CompressionCuttoff)
+                    if (AsyncTcp.UseCompression && bytes.Length >= AsyncTcp.CompressionCuttoff)
                     {
                         useCompression = true;
                         bytes = await CompressWithGzipAsync(bytes).ConfigureAwait(false);
