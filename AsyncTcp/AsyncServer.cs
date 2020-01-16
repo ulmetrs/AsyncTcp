@@ -41,14 +41,14 @@ namespace AsyncTcp
                 address = await Utils.GetIPAddress().ConfigureAwait(false);
             }
 
+            HostName = address.ToString();
+
             _listener = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
             _listener.NoDelay = true;
             _listener.Bind(new IPEndPoint(address, bindPort));
             _listener.Listen(100);
 
-            HostName = address.ToString();
-
-            await LogMessageAsync(string.Format(HostnameMessage, HostName, address, bindPort)).ConfigureAwait(false);
+            await LogMessageAsync(string.Format(HostnameMessage, HostName, address, bindPort), true).ConfigureAwait(false);
 
             _serverRunning = true;
 
@@ -62,7 +62,7 @@ namespace AsyncTcp
             try
             {
                 // Accept all connections while server running
-                while (_serverRunning && (socket = await _listener.AcceptAsync().ConfigureAwait(false)) != null)
+                while ((socket = await _listener.AcceptAsync().ConfigureAwait(false)) != null)
                 {
                     socket.NoDelay = true;
                     // Add Async Task Process Socket, this task will handle the new connection until it closes
@@ -85,12 +85,16 @@ namespace AsyncTcp
                     }
                 }
             }
-            catch
-            { }
-            // Shutdown server if not already
+            catch(Exception e)
+            {
+                await LogErrorAsync(e, "Accepted Loop Exception", true).ConfigureAwait(false);
+            }
+
             ShutDown();
-            // Wait for all remaining tasks to finish
+
             await Task.WhenAll(tasks).ConfigureAwait(false);
+
+            await LogMessageAsync("Finished Awaiting Server Tasks", true).ConfigureAwait(false);
         }
 
         private async Task ProcessSocket(Socket socket)
@@ -99,18 +103,9 @@ namespace AsyncTcp
 
             _peers[peer.PeerId] = peer;
 
-            try
-            {
-                await _handler.PeerConnected(peer).ConfigureAwait(false);
-            }
-            catch (Exception e)
-            {
-                await LogErrorAsync(e, PeerConnectedErrorMessage, false).ConfigureAwait(false);
-            }
-
             await peer.Process().ConfigureAwait(false);
 
-            await RemovePeer(peer).ConfigureAwait(false);
+            RemovePeer(peer);
         }
 
         public void ShutDown()
@@ -136,20 +131,16 @@ namespace AsyncTcp
             }
         }
 
-        public async Task RemovePeer(AsyncPeer peer)
+        public void RemovePeer(AsyncPeer peer)
         {
-            if (_peers.TryRemove(peer.PeerId, out AsyncPeer removedPeer))
+            RemovePeer(peer.PeerId);
+        }
+
+        public void RemovePeer(long peerId)
+        {
+            if (_peers.TryRemove(peerId, out AsyncPeer removedPeer))
             {
                 removedPeer.ShutDown();
-
-                try
-                {
-                    await _handler.PeerDisconnected(removedPeer).ConfigureAwait(false);
-                }
-                catch (Exception e)
-                {
-                    await LogErrorAsync(e, PeerRemovedErrorMessage, false).ConfigureAwait(false);
-                }
             }
         }
 
@@ -172,7 +163,7 @@ namespace AsyncTcp
 
                     async Task SendKeepAliveAsync(KeyValuePair<long, AsyncPeer> kv)
                     {
-                        await kv.Value.Send(0).ConfigureAwait(false);
+                        await kv.Value.Send(AsyncTcp.KeepAliveType).ConfigureAwait(false);
                     }
 
                     await _peers.ParallelForEachAsync(SendKeepAliveAsync, 24).ConfigureAwait(false);

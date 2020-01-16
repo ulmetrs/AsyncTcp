@@ -11,57 +11,49 @@ namespace AsyncTcp
     // AWS Network LB Requires this behaviour to register targets
     public class AsyncHealth
     {
-        private IPAddress _ipAddress;
-        private int _bindPort;
         private Socket _listener;
-        private bool _serverRunning;
 
-        public async Task Start(IPAddress ipAddress = null, int bindPort = 9050)
+        public async Task Start(IPAddress address = null, int bindPort = 9050)
         {
-            _ipAddress = ipAddress;
-            if (_ipAddress == null)
+            if (address == null)
             {
-                IPHostEntry ipHostInfo = Dns.GetHostEntry(Dns.GetHostName());
-                _ipAddress = ipHostInfo.AddressList[0];
+                address = await Utils.GetIPAddress().ConfigureAwait(false);
             }
-            _bindPort = bindPort;
 
-            await LogMessageAsync(string.Format(HostnameMessage, Dns.GetHostName(), ipAddress, _bindPort)).ConfigureAwait(false);
-            // Establish the local endpoint for the socket.  
-            IPEndPoint localEndPoint = new IPEndPoint(_ipAddress, _bindPort);
-            // Create a TCP/IP socket.  
-            _listener = new Socket(_ipAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            // Bind the socket to the local endpoint and listen for incoming connections.
-            _listener.Bind(localEndPoint);
+            _listener = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            _listener.NoDelay = true;
+            _listener.Bind(new IPEndPoint(address, bindPort));
             _listener.Listen(100);
-            // Set server running
-            _serverRunning = true;
-            Socket socket;
+
+            await LogMessageAsync(string.Format(HostnameMessage, address.ToString(), address, bindPort), true).ConfigureAwait(false);
+
             try
             {
-                while (_serverRunning && (socket = await _listener.AcceptAsync().ConfigureAwait(false)) != null)
+                Socket socket;
+                while ((socket = await _listener.AcceptAsync().ConfigureAwait(false)) != null)
                 {
                     socket.Shutdown(SocketShutdown.Both);
                     socket.Close();
                     await Task.Delay(1000).ConfigureAwait(false);
                 }
             }
-            catch
+            catch (Exception e)
             {
-                // Exception driven design I know, but need to work with what I got
+                await LogErrorAsync(e, "Accepted Loop Exception", true).ConfigureAwait(false);
             }
+
+            ShutDown();
         }
 
         public void ShutDown()
         {
-            _serverRunning = false;
             try
             {
                 _listener.Shutdown(SocketShutdown.Both);
                 _listener.Close();
             }
-            catch (Exception e)
-            { LogError(e, null); }
+            catch
+            { }
         }
     }
 }

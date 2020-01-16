@@ -3,7 +3,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using static AsyncTcp.Logging;
-using static AsyncTcp.Values;
 
 namespace AsyncTcp
 {
@@ -14,8 +13,6 @@ namespace AsyncTcp
         private AsyncPeer _serverPeer;
 
         private bool _clientRunning;
-
-        public string HostName { get; private set; }
 
         public AsyncClient(
             IAsyncHandler handler,
@@ -28,47 +25,35 @@ namespace AsyncTcp
             _keepAliveInterval = keepAliveInterval;
         }
 
-        public Task Send(int type, object data)
+        public async Task Start(IPAddress address, int bindPort = 9050)
         {
-            return _serverPeer.Send(type, data);
-        }
-
-        public async Task Start(string hostName, int bindPort = 9050, bool findDnsMatch = false)
-        {
-            var address = await Utils.GetIPAddress(hostName, findDnsMatch).ConfigureAwait(false);
-
-            var remoteEndpoint = new IPEndPoint(address, bindPort);
             var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
             socket.NoDelay = true;
-            await socket.ConnectAsync(remoteEndpoint).ConfigureAwait(false);
 
-            HostName = address.ToString();
+            try
+            {
+                await socket.ConnectAsync(new IPEndPoint(address, bindPort)).ConfigureAwait(false);
+            }
+            catch
+            {
+                await LogMessageAsync("Caught ConnectAsync Exception", true).ConfigureAwait(false);
+                return;
+            }
 
             _clientRunning = true;
 
             _serverPeer = new AsyncPeer(socket, _handler);
 
-            try
-            {
-                await _handler.PeerConnected(_serverPeer).ConfigureAwait(false);
-            }
-            catch (Exception e)
-            {
-                await LogErrorAsync(e, PeerConnectedErrorMessage, false).ConfigureAwait(false);
-            }
-
             var keepAlive = Task.Run(KeepAlive);
 
             await _serverPeer.Process().ConfigureAwait(false);
 
-            await ShutDown().ConfigureAwait(false);
+            ShutDown();
 
             await keepAlive.ConfigureAwait(false);
         }
 
-        
-
-        public async Task ShutDown()
+        public void ShutDown()
         {
             _clientRunning = false;
 
@@ -76,36 +61,33 @@ namespace AsyncTcp
             {
                 _serverPeer.ShutDown();
 
-                try
-                {
-                    await _handler.PeerDisconnected(_serverPeer).ConfigureAwait(false);
-                }
-                catch (Exception e)
-                {
-                    await LogErrorAsync(e, PeerRemovedErrorMessage).ConfigureAwait(false);
-                }
-                
                 _serverPeer = null;
             }
+        }
+
+        public Task Send(int type, object data = null)
+        {
+            return _serverPeer.Send(type, data);
         }
 
         private async Task KeepAlive()
         {
             var count = _keepAliveInterval;
+
             while (_clientRunning)
             {
-                // Send Keep Alives every interval
+                await Task.Delay(1000).ConfigureAwait(false);
+                
                 if (count == _keepAliveInterval)
                 {
-                    await _serverPeer.Send(0).ConfigureAwait(false);
                     count = 0;
+
+                    await _serverPeer.Send(0).ConfigureAwait(false);
                 }
                 else
                 {
                     count++;
                 }
-                // Check every second for exit
-                await Task.Delay(1000).ConfigureAwait(false);
             }
         }
     }

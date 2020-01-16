@@ -7,6 +7,12 @@ namespace AsyncTcp
 {
     public static class Logging
     {
+        // String Error Messages
+        public const string SendErrorMessage = "Send Error: {0}";
+        public const string ReceiveErrorMessage = "Received Error: {0}";
+        public const string PeerConnectedErrorMessage = "Peer Connected Error: {0}";
+        public const string PeerRemovedErrorMessage = "Peer Disconnected Error: {0}";
+
         // TODO: Connect Trace LogProvider to AWS CloudWatch (Setup app.config for Trace LogProvider)
         public static async Task LogMessageAsync(string message, bool printToConsole = false)
         {

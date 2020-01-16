@@ -5,6 +5,7 @@ namespace AsyncTcp
 {
     public static class AsyncTcp
     {
+        internal const int KeepAliveType = 0;
         internal const int BoolSize = 1;
         internal const int IntSize = 4;
         internal const int ZeroOffset = 0;
@@ -13,6 +14,7 @@ namespace AsyncTcp
         internal const int CompressedOffset = 8;
         internal const int HeaderSize = 9;
         internal const int CompressionCuttoff = 860; // 1000, 1500 ???
+        internal const int MinReceiveBufferSize = 512;
 
         internal static ISerializer Serializer;
         internal static bool UseCompression;
@@ -29,7 +31,7 @@ namespace AsyncTcp
             UseCompression = useCompression;
 
             _headerBytes = new Dictionary<int, byte[]>();
-            _headerBytes[0] = new byte[8];
+            _headerBytes[KeepAliveType] = new byte[HeaderSize];
 
             IsInitialized = true;
 

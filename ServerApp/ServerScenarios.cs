@@ -1,28 +1,29 @@
 ﻿using AsyncTcp;
 using AsyncTest;
 using System;
+using System.Net;
 using System.Threading.Tasks;
 
 namespace ServerApp
 {
-    public class ServerManager : IAsyncHandler, ISerializer
+    public class ServerScenarios : IAsyncHandler, ISerializer
     {
-        public AsyncServer AsyncServer { get; }
-
-        public ServerManager()
+        public ServerScenarios()
         {
             AsyncTcp.AsyncTcp.Initialize(this);
-            AsyncServer = new AsyncServer(this);
         }
 
-        public Task Start()
+        public async Task RunServer()
         {
-            return AsyncServer.Start();
+            var server = new AsyncServer(this);
+            //var task = Task.Run(() => RemovePeer(server));
+            await server.Start(IPAddress.Loopback).ConfigureAwait(false);
         }
 
-        public void Shutdown()
+        public async Task RemovePeer(AsyncServer server)
         {
-            AsyncServer.ShutDown();
+            await Task.Delay(15000);
+            server.RemovePeer(0);
         }
 
         public async Task PeerConnected(AsyncPeer peer)
@@ -37,11 +38,14 @@ namespace ServerApp
 
         public async Task PacketReceived(AsyncPeer peer, int type, object packet)
         {
-            var message = (TestMessage)packet;
+            if (type == 1)
+            {
+                var message = (TestMessage)packet;
 
-            await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) Received Message: {message.index}").ConfigureAwait(false);
+                await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) Received Message: {message.index}").ConfigureAwait(false);
 
-            await peer.Send(type, message);
+                await peer.Send(type, message);
+            }
         }
 
         public byte[] Serialize(object obj)
