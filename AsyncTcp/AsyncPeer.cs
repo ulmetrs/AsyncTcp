@@ -162,8 +162,6 @@ namespace AsyncTcp
                     break;
                 }
             }
-
-            await LogMessageAsync("Finished Send Task", false).ConfigureAwait(false);
         }
 
         private async Task ReceiveFromSocket(PipeWriter writer)
@@ -200,8 +198,6 @@ namespace AsyncTcp
             }
 
             await writer.CompleteAsync().ConfigureAwait(false);
-
-            await LogMessageAsync("Finished Receive from Sock Task", false).ConfigureAwait(false);
         }
 
         private async Task ParseBytes(PipeReader reader)
@@ -236,8 +232,6 @@ namespace AsyncTcp
             await reader.CompleteAsync().ConfigureAwait(false);
 
             _receiveChannel.Writer.TryComplete();
-
-            await LogMessageAsync("Finished Parse Bytes Task", false).ConfigureAwait(false);
         }
 
         // Honestly, a Delimiter character might be worth using, that way we can grab the entire sequence, parse out the header from the slice and do the same for the buffer
@@ -309,8 +303,6 @@ namespace AsyncTcp
                     await LogErrorAsync(e, ReceiveErrorMessage, false).ConfigureAwait(false);
                 }
             }
-
-            await LogMessageAsync("Finished Process Packet Task", false).ConfigureAwait(false);
         }
     }
 

@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace ServerApp
 {
-    public class ServerScenarios : IAsyncHandler, ISerializer
+    public class ServerScenarios : ISerializer, IAsyncHandler
     {
         public ServerScenarios()
         {
@@ -22,8 +22,22 @@ namespace ServerApp
 
         public async Task RemovePeer(AsyncServer server)
         {
-            await Task.Delay(15000);
-            server.RemovePeer(0);
+            await Task.Delay(15000).ConfigureAwait(false);
+            await server.RemovePeer(0).ConfigureAwait(false);
+        }
+
+        public byte[] Serialize(object obj)
+        {
+            return Utf8Json.JsonSerializer.Serialize(obj);
+        }
+
+        public object Deserialize(int type, byte[] bytes)
+        {
+            if (type == 1)
+            {
+                return Utf8Json.JsonSerializer.Deserialize<TestMessage>(bytes);
+            }
+            return null;
         }
 
         public async Task PeerConnected(AsyncPeer peer)
@@ -46,20 +60,6 @@ namespace ServerApp
 
                 await peer.Send(type, message);
             }
-        }
-
-        public byte[] Serialize(object obj)
-        {
-            return Utf8Json.JsonSerializer.Serialize(obj);
-        }
-
-        public object Deserialize(int type, byte[] bytes)
-        {
-            if (type == 1)
-            {
-                return Utf8Json.JsonSerializer.Deserialize<TestMessage>(bytes);
-            }
-            return null;
         }
     }
 }
