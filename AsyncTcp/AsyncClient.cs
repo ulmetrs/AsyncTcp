@@ -10,13 +10,13 @@ namespace AsyncTcp
     {
         private readonly IAsyncHandler _handler;
         private readonly int _keepAliveInterval;
-        private AsyncPeer _serverPeer;
 
+        private AsyncPeer _serverPeer;
         private bool _clientRunning;
 
         public AsyncClient(
             IAsyncHandler handler,
-            int keepAliveInterval = 10)
+            int keepAliveInterval = AsyncTcp.KeepAliveInterval)
         {
             if (!AsyncTcp.IsInitialized)
                 throw new Exception("AsyncTcp must be initialized before creating a client");
@@ -36,7 +36,7 @@ namespace AsyncTcp
             }
             catch
             {
-                await LogMessageAsync("Caught ConnectAsync Exception", true).ConfigureAwait(false);
+                await LogMessageAsync("Caught ConnectAsync Exception", false).ConfigureAwait(false);
                 return;
             }
 
@@ -48,26 +48,21 @@ namespace AsyncTcp
 
             await _serverPeer.Process().ConfigureAwait(false);
 
-            ShutDown();
+            await ShutDown().ConfigureAwait(false);
 
             await keepAlive.ConfigureAwait(false);
-        }
-
-        public void ShutDown()
-        {
-            _clientRunning = false;
-
-            if (_serverPeer != null)
-            {
-                _serverPeer.ShutDown();
-
-                _serverPeer = null;
-            }
         }
 
         public Task Send(int type, object data = null)
         {
             return _serverPeer.Send(type, data);
+        }
+
+        public Task ShutDown(object data = null)
+        {
+            _clientRunning = false;
+
+            return _serverPeer.Send(AsyncTcp.ErrorType, data);
         }
 
         private async Task KeepAlive()
@@ -76,13 +71,13 @@ namespace AsyncTcp
 
             while (_clientRunning)
             {
-                await Task.Delay(1000).ConfigureAwait(false);
+                await Task.Delay(AsyncTcp.KeepAliveDelay).ConfigureAwait(false);
                 
                 if (count == _keepAliveInterval)
                 {
                     count = 0;
 
-                    await _serverPeer.Send(0).ConfigureAwait(false);
+                    await _serverPeer.Send(AsyncTcp.KeepAliveType).ConfigureAwait(false);
                 }
                 else
                 {

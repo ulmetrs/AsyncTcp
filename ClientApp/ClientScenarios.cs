@@ -42,7 +42,7 @@ namespace ClientApp
 
             for (int i = 0; i < clients.Count; i++)
             {
-                clients[i].ShutDown();
+                await clients[i].ShutDown().ConfigureAwait(false);
             }
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
@@ -72,12 +72,16 @@ namespace ClientApp
 
             await Task.WhenAll(sendTasks).ConfigureAwait(false);
 
+            await Console.Out.WriteLineAsync("Finished SendTasks").ConfigureAwait(false);
+
             for (int i = 0; i < clients.Count; i++)
             {
-                clients[i].ShutDown();
+                await clients[i].ShutDown().ConfigureAwait(false);
             }
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
+
+            await Console.Out.WriteLineAsync("Finished DataScenario").ConfigureAwait(false);
         }
 
         private async Task DataTask(AsyncClient client)

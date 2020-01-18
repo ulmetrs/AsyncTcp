@@ -10,7 +10,7 @@ namespace ClientApp
         {
             var scenarios = new ClientScenarios(IPAddress.Loopback);
             //await scenarios.RunKeepAliveScenarioAsync(20).ConfigureAwait(false);
-            await scenarios.RunDataScenarioAsync(100).ConfigureAwait(false);
+            await scenarios.RunDataScenarioAsync(1).ConfigureAwait(false);
             await Console.In.ReadLineAsync().ConfigureAwait(false);
         }
     }

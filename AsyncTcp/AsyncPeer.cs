@@ -20,6 +20,7 @@ namespace AsyncTcp
         private IAsyncHandler _handler;
         private Channel<ObjectPacket> _sendChannel;
         private Channel<BytePacket> _receiveChannel;
+        private bool _processing;
 
         // Peers are constructed from connected sockets
         internal AsyncPeer(
@@ -38,11 +39,14 @@ namespace AsyncTcp
             }
             catch (Exception e)
             {
-                await LogErrorAsync(e, PeerConnectedErrorMessage, true).ConfigureAwait(false);
+                await LogErrorAsync(e, PeerConnectedErrorMessage, false).ConfigureAwait(false);
             }
+
+            _processing = true;
 
             _sendChannel = Channel.CreateUnbounded<ObjectPacket>();
             _receiveChannel = Channel.CreateUnbounded<BytePacket>();
+
             // There are many pipe options we can play with
             //var options = new PipeOptions(pauseWriterThreshold: 10, resumeWriterThreshold: 5);
             var pipe = new Pipe();
@@ -65,8 +69,10 @@ namespace AsyncTcp
             }
         }
 
-        public void ShutDown()
+        private void ShutDown()
         {
+            _processing = false;
+
             try
             {
                 _socket.Shutdown(SocketShutdown.Both);
@@ -79,10 +85,13 @@ namespace AsyncTcp
 
         public async Task Send(int type, object data = null)
         {
-            await _sendChannel
-                .Writer
-                .WriteAsync(new ObjectPacket() { Type = type, Data = data })
-                .ConfigureAwait(false);
+            if (_processing)
+            {
+                await _sendChannel
+                    .Writer
+                    .WriteAsync(new ObjectPacket() { Type = type, Data = data })
+                    .ConfigureAwait(false);
+            }
         }
 
         private async Task ProcessSend()
@@ -145,7 +154,16 @@ namespace AsyncTcp
                         ArrayPool<byte>.Shared.Return(buffer);
                     }
                 }
+
+                // We send an error from the server so that the client can retrieve an error reason, but we don't want to wait for the client to shutdown
+                if (packet.Type == AsyncTcp.ErrorType)
+                {
+                    ShutDown();
+                    break;
+                }
             }
+
+            await LogMessageAsync("Finished Send Task", false).ConfigureAwait(false);
         }
 
         private async Task ReceiveFromSocket(PipeWriter writer)
@@ -182,6 +200,8 @@ namespace AsyncTcp
             }
 
             await writer.CompleteAsync().ConfigureAwait(false);
+
+            await LogMessageAsync("Finished Receive from Sock Task", false).ConfigureAwait(false);
         }
 
         private async Task ParseBytes(PipeReader reader)
@@ -216,6 +236,8 @@ namespace AsyncTcp
             await reader.CompleteAsync().ConfigureAwait(false);
 
             _receiveChannel.Writer.TryComplete();
+
+            await LogMessageAsync("Finished Parse Bytes Task", false).ConfigureAwait(false);
         }
 
         // Honestly, a Delimiter character might be worth using, that way we can grab the entire sequence, parse out the header from the slice and do the same for the buffer
@@ -274,7 +296,7 @@ namespace AsyncTcp
                     }
                     catch (Exception e)
                     {
-                        await LogErrorAsync(e, ReceiveErrorMessage, true).ConfigureAwait(false);
+                        await LogErrorAsync(e, ReceiveErrorMessage, false).ConfigureAwait(false);
                     }
                 }
 
@@ -284,9 +306,11 @@ namespace AsyncTcp
                 }
                 catch (Exception e)
                 {
-                    await LogErrorAsync(e, ReceiveErrorMessage, true).ConfigureAwait(false);
+                    await LogErrorAsync(e, ReceiveErrorMessage, false).ConfigureAwait(false);
                 }
             }
+
+            await LogMessageAsync("Finished Process Packet Task", false).ConfigureAwait(false);
         }
     }
 

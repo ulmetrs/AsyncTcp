@@ -11,8 +11,6 @@ namespace AsyncTcp
 {
     public class AsyncServer
     {
-        private const int TaskCleanupInterval = 100;
-
         private readonly IAsyncHandler _handler;
         private readonly int _keepAliveInterval;
         private readonly ConcurrentDictionary<long, AsyncPeer> _peers;
@@ -24,7 +22,7 @@ namespace AsyncTcp
 
         public AsyncServer(
             IAsyncHandler handler,
-            int keepAliveInterval = 10)
+            int keepAliveInterval = AsyncTcp.KeepAliveInterval)
         {
             if (!AsyncTcp.IsInitialized)
                 throw new Exception("AsyncTcp must be initialized before creating a client");
@@ -48,7 +46,7 @@ namespace AsyncTcp
             _listener.Bind(new IPEndPoint(address, bindPort));
             _listener.Listen(100);
 
-            await LogMessageAsync(string.Format(HostnameMessage, HostName, address, bindPort), true).ConfigureAwait(false);
+            await LogMessageAsync(string.Format(HostnameMessage, HostName, address, bindPort), false).ConfigureAwait(false);
 
             _serverRunning = true;
 
@@ -70,7 +68,7 @@ namespace AsyncTcp
                     // Increment task count so we know when to run our task cleanup again
                     taskCount++;
                     // Cleanup our tasks list, server can be long running so we don't wan't to append tasks forever
-                    if (taskCount >= TaskCleanupInterval)
+                    if (taskCount >= AsyncTcp.TaskCleanupInterval)
                     {
                         taskCount = 0;
                         var newTasks = new List<Task>();
@@ -87,14 +85,14 @@ namespace AsyncTcp
             }
             catch(Exception e)
             {
-                await LogErrorAsync(e, "Accepted Loop Exception", true).ConfigureAwait(false);
+                await LogErrorAsync(e, "Accepted Loop Exception", false).ConfigureAwait(false);
             }
 
-            ShutDown();
+            await ShutDown().ConfigureAwait(false);
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
 
-            await LogMessageAsync("Finished Awaiting Server Tasks", true).ConfigureAwait(false);
+            await LogMessageAsync("Finished Awaiting Server Tasks", false).ConfigureAwait(false);
         }
 
         private async Task ProcessSocket(Socket socket)
@@ -105,12 +103,11 @@ namespace AsyncTcp
 
             await peer.Process().ConfigureAwait(false);
 
-            RemovePeer(peer);
+            await RemovePeer(peer).ConfigureAwait(false);
         }
 
-        public void ShutDown()
+        public async Task ShutDown(object data = null)
         {
-            // Turn off server running flag
             _serverRunning = false;
 
             try
@@ -125,23 +122,26 @@ namespace AsyncTcp
                 return;
 
             // Send Kill Signals to the Peer Sockets
-            foreach (var kvp in _peers)
+            async Task SendErrorAsync(KeyValuePair<long, AsyncPeer> kv)
             {
-                kvp.Value.ShutDown();
+                await kv.Value.Send(AsyncTcp.ErrorType, data).ConfigureAwait(false);
             }
+
+            await _peers.ParallelForEachAsync(SendErrorAsync, 24).ConfigureAwait(false);
         }
 
-        public void RemovePeer(AsyncPeer peer)
+        public Task RemovePeer(AsyncPeer peer, object data = null)
         {
-            RemovePeer(peer.PeerId);
+            return RemovePeer(peer.PeerId, data);
         }
 
-        public void RemovePeer(long peerId)
+        public Task RemovePeer(long peerId, object data = null)
         {
-            if (_peers.TryRemove(peerId, out AsyncPeer removedPeer))
+            if (_peers.TryRemove(peerId, out AsyncPeer peer))
             {
-                removedPeer.ShutDown();
+                return peer.Send(AsyncTcp.ErrorType, data);
             }
+            return Task.CompletedTask;
         }
 
         private async Task KeepAlive()
@@ -150,7 +150,7 @@ namespace AsyncTcp
 
             while (_serverRunning)
             {
-                await Task.Delay(1000).ConfigureAwait(false);
+                await Task.Delay(AsyncTcp.KeepAliveDelay).ConfigureAwait(false);
 
                 if (count == _keepAliveInterval)
                 {

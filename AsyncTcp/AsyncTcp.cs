@@ -5,9 +5,13 @@ namespace AsyncTcp
 {
     public static class AsyncTcp
     {
-        internal const int KeepAliveType = 0;
+        // Reserve negative types for AsyncTcp built-in types
+        public const int KeepAliveType = -1;
+        public const int ErrorType = -2;
+
         internal const int BoolSize = 1;
         internal const int IntSize = 4;
+
         internal const int ZeroOffset = 0;
         internal const int TypeOffset = 0;
         internal const int LengthOffset = 4;
@@ -15,6 +19,9 @@ namespace AsyncTcp
         internal const int HeaderSize = 9;
         internal const int CompressionCuttoff = 860; // 1000, 1500 ???
         internal const int MinReceiveBufferSize = 512;
+        internal const int KeepAliveDelay = 1000;
+        internal const int KeepAliveInterval = 10;
+        internal const int TaskCleanupInterval = 100;
 
         internal static ISerializer Serializer;
         internal static bool UseCompression;
@@ -31,42 +38,11 @@ namespace AsyncTcp
             UseCompression = useCompression;
 
             _headerBytes = new Dictionary<int, byte[]>();
-            _headerBytes[KeepAliveType] = new byte[HeaderSize];
+            HeaderBytes(KeepAliveType);
+            HeaderBytes(ErrorType);
 
             IsInitialized = true;
-
-            /*
-             _methods = new Dictionary<int, MethodInfo>();
-            // Use reflection to get the deserialize method info of the provided serializer
-            var method = serializer.GetType().GetMethod("Deserialize");
-
-            foreach (var kv in typeMap)
-            {
-                if (kv.Key == 0)
-                    throw new Exception("Type '0' Reserved for Keep-Alive Packet");
-
-                if (kv.Value != null)
-                    _methods[kv.Key] = method.MakeGenericMethod(new Type[] { kv.Value });
-
-                var bytes = new byte[HeaderSize];
-                BitConverter.GetBytes(kv.Key).CopyTo(bytes, 0);
-                HeaderBytes[kv.Key] = bytes;
-            }
-            */
         }
-
-        /*
-        public static byte[] Serialize(object data)
-        {
-            return _serializer.Serialize(data);
-        }
-
-        public static object Deserialize(int type, byte[] bytes)
-        {
-            //return _methods[type].Invoke(_serializer, new object[] { bytes });
-            return _serializer.Deserialize(type, bytes);
-        }
-        */
 
         // Lazy Memoize our Zero Length Headers
         public static byte[] HeaderBytes(int type)
