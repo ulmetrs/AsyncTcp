@@ -34,17 +34,27 @@ namespace AsyncTcp
 
         public async Task Start(IPAddress address = null, int bindPort = 9050)
         {
-            if (address == null)
+            if (_serverRunning)
+                throw new Exception("Cannot Start, Server is running");
+
+            try
             {
-                address = await Utils.GetIPAddress().ConfigureAwait(false);
+                if (address == null)
+                {
+                    address = await Utils.GetIPAddress().ConfigureAwait(false);
+                }
+
+                HostName = address.ToString();
+
+                _listener = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                _listener.NoDelay = true;
+                _listener.Bind(new IPEndPoint(address, bindPort));
+                _listener.Listen(100);
             }
-
-            HostName = address.ToString();
-
-            _listener = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            _listener.NoDelay = true;
-            _listener.Bind(new IPEndPoint(address, bindPort));
-            _listener.Listen(100);
+            catch
+            {
+                throw;
+            }
 
             await LogMessageAsync(string.Format(HostnameMessage, HostName, address, bindPort), false).ConfigureAwait(false);
 
@@ -91,8 +101,6 @@ namespace AsyncTcp
             await ShutDown().ConfigureAwait(false);
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
-
-            await LogMessageAsync("Finished Awaiting Server Tasks", false).ConfigureAwait(false);
         }
 
         private async Task ProcessSocket(Socket socket)
@@ -135,13 +143,12 @@ namespace AsyncTcp
             return RemovePeer(peer.PeerId, data);
         }
 
-        public Task RemovePeer(long peerId, object data = null)
+        public async Task RemovePeer(long peerId, object data = null)
         {
             if (_peers.TryRemove(peerId, out AsyncPeer peer))
             {
-                return peer.Send(AsyncTcp.ErrorType, data);
+                await peer.Send(AsyncTcp.ErrorType, data).ConfigureAwait(false);
             }
-            return Task.CompletedTask;
         }
 
         private async Task KeepAlive()

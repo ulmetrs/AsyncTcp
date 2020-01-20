@@ -33,17 +33,6 @@ namespace AsyncTcp
 
         internal async Task Process()
         {
-            try
-            {
-                await _handler.PeerConnected(this).ConfigureAwait(false);
-            }
-            catch (Exception e)
-            {
-                await LogErrorAsync(e, PeerConnectedErrorMessage, false).ConfigureAwait(false);
-            }
-
-            _processing = true;
-
             _sendChannel = Channel.CreateUnbounded<ObjectPacket>();
             _receiveChannel = Channel.CreateUnbounded<BytePacket>();
 
@@ -54,6 +43,17 @@ namespace AsyncTcp
             var receiveTask = ReceiveFromSocket(pipe.Writer);
             var parseTask = ParseBytes(pipe.Reader);
             var processTask = ProcessPacket();
+
+            _processing = true;
+
+            try
+            {
+                await _handler.PeerConnected(this).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                await LogErrorAsync(e, PeerConnectedErrorMessage, false).ConfigureAwait(false);
+            }
 
             await Task.WhenAll(sendTask, receiveTask, parseTask, processTask).ConfigureAwait(false);
 

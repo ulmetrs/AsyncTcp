@@ -2,7 +2,6 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
-using static AsyncTcp.Logging;
 
 namespace AsyncTcp
 {
@@ -27,6 +26,9 @@ namespace AsyncTcp
 
         public async Task Start(IPAddress address, int bindPort = 9050)
         {
+            if (_clientRunning)
+                throw new Exception("Cannot Start, Client is running");
+
             var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
             socket.NoDelay = true;
 
@@ -36,13 +38,12 @@ namespace AsyncTcp
             }
             catch
             {
-                await LogMessageAsync("Caught ConnectAsync Exception", false).ConfigureAwait(false);
-                return;
+                throw;
             }
+            
+            _serverPeer = new AsyncPeer(socket, _handler);
 
             _clientRunning = true;
-
-            _serverPeer = new AsyncPeer(socket, _handler);
 
             var keepAlive = Task.Run(KeepAlive);
 
@@ -55,6 +56,9 @@ namespace AsyncTcp
 
         public Task Send(int type, object data = null)
         {
+            if (!_clientRunning)
+                throw new Exception("Cannot Send, Client is not running");
+
             return _serverPeer.Send(type, data);
         }
 
