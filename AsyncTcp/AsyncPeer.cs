@@ -57,8 +57,6 @@ namespace AsyncTcp
 
             await Task.WhenAll(sendTask, receiveTask, parseTask, processTask).ConfigureAwait(false);
 
-            ShutDown();
-
             try
             {
                 await _handler.PeerDisconnected(this).ConfigureAwait(false);
@@ -81,6 +79,7 @@ namespace AsyncTcp
             catch { }
 
             _sendChannel.Writer.TryComplete();
+            _receiveChannel.Writer.TryComplete();
         }
 
         public async Task Send(int type, object data = null)
@@ -114,6 +113,7 @@ namespace AsyncTcp
                     }
                     catch
                     {
+                        ShutDown();
                         break;
                     }
                 }
@@ -147,6 +147,7 @@ namespace AsyncTcp
                     }
                     catch
                     {
+                        ShutDown();
                         break;
                     }
                     finally
@@ -179,12 +180,14 @@ namespace AsyncTcp
                     bytesRead = await _socket.ReceiveAsync(memory.GetArray(), SocketFlags.None);
                     if (bytesRead == 0)
                     {
+                        ShutDown();
                         break;
                     }
                     writer.Advance(bytesRead);
                 }
                 catch (Exception ex)
                 {
+                    ShutDown();
                     await LogErrorAsync(ex, ReceiveErrorMessage, false).ConfigureAwait(false);
                     break;
                 }
@@ -230,8 +233,6 @@ namespace AsyncTcp
             }
 
             await reader.CompleteAsync().ConfigureAwait(false);
-
-            _receiveChannel.Writer.TryComplete();
         }
 
         // Honestly, a Delimiter character might be worth using, that way we can grab the entire sequence, parse out the header from the slice and do the same for the buffer
@@ -301,6 +302,12 @@ namespace AsyncTcp
                 catch (Exception e)
                 {
                     await LogErrorAsync(e, ReceiveErrorMessage, false).ConfigureAwait(false);
+                }
+
+                if (packet.Type == AsyncTcp.ErrorType)
+                {
+                    ShutDown();
+                    break;
                 }
             }
         }
