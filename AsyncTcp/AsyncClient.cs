@@ -56,8 +56,10 @@ namespace AsyncTcp
 
         public Task Send(int type, object data = null)
         {
+            // Since we cannot guarantee that queued sends will even be sent out after they are queued (socket error/disconnect),
+            // it doesn't make sense to throw here indicating failed queued messages after shutdown, since its a half-way solution to that problem
             if (!_clientRunning)
-                throw new Exception("Cannot Send, Client is not running");
+                return Task.CompletedTask;
 
             return _serverPeer.Send(type, data);
         }

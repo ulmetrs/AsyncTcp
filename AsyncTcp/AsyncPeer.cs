@@ -84,13 +84,15 @@ namespace AsyncTcp
 
         public async Task Send(int type, object data = null)
         {
-            if (_processing)
-            {
-                await _sendChannel
-                    .Writer
-                    .WriteAsync(new ObjectPacket() { Type = type, Data = data })
-                    .ConfigureAwait(false);
-            }
+            // Since we cannot guarantee that queued sends will even be sent out after they are queued (socket error/disconnect),
+            // it doesn't make sense to throw here indicating failed queued messages after shutdown, since its a half-way solution to that problem
+            if (!_processing)
+                return;
+
+            await _sendChannel
+                .Writer
+                .WriteAsync(new ObjectPacket() { Type = type, Data = data })
+                .ConfigureAwait(false);
         }
 
         private async Task ProcessSend()
@@ -177,7 +179,7 @@ namespace AsyncTcp
 
                 try
                 {
-                    bytesRead = await _socket.ReceiveAsync(memory.GetArray(), SocketFlags.None);
+                    bytesRead = await _socket.ReceiveAsync(memory.GetArray(), SocketFlags.None).ConfigureAwait(false);
                     if (bytesRead == 0)
                     {
                         ShutDown();
@@ -192,7 +194,7 @@ namespace AsyncTcp
                     break;
                 }
 
-                result = await writer.FlushAsync();
+                result = await writer.FlushAsync().ConfigureAwait(false);
 
                 if (result.IsCompleted)
                 {
