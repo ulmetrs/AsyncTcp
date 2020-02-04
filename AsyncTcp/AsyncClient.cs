@@ -2,6 +2,8 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
+using static AsyncTcp.Logging;
+using static AsyncTcp.Values;
 
 namespace AsyncTcp
 {
@@ -9,9 +11,12 @@ namespace AsyncTcp
     {
         private readonly IAsyncHandler _handler;
         private readonly int _keepAliveInterval;
+        private AsyncPeer _peer;
 
-        private AsyncPeer _serverPeer;
+        private Socket _socket;
         private bool _clientRunning;
+
+        public string HostName { get; private set; }
 
         public AsyncClient(
             IAsyncHandler handler,
@@ -29,29 +34,35 @@ namespace AsyncTcp
             if (_clientRunning)
                 throw new Exception("Cannot Start, Client is running");
 
-            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            socket.NoDelay = true;
-
             try
             {
-                await socket.ConnectAsync(new IPEndPoint(address, bindPort)).ConfigureAwait(false);
+                _socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                _socket.NoDelay = true;
+                await _socket.ConnectAsync(new IPEndPoint(address, bindPort)).ConfigureAwait(false);
+
+                HostName = address.ToString();
             }
-            catch
+            catch (Exception e)
             {
-                throw;
+                await LogErrorAsync(e, "Connect Exception", false).ConfigureAwait(false);
+                return;
             }
-            
-            _serverPeer = new AsyncPeer(socket, _handler);
+
+            await LogMessageAsync(string.Format(HostnameMessage, HostName, address, bindPort), false).ConfigureAwait(false);
 
             _clientRunning = true;
 
+            _peer = new AsyncPeer(_socket, _handler);
+
             var keepAlive = Task.Run(KeepAlive);
 
-            await _serverPeer.Process().ConfigureAwait(false);
+            await _peer.Process().ConfigureAwait(false);
 
             await ShutDown().ConfigureAwait(false);
 
             await keepAlive.ConfigureAwait(false);
+
+            await LogMessageAsync(string.Format("Finished AsyncClient Task"), false).ConfigureAwait(false);
         }
 
         public Task Send(int type, object data = null)
@@ -61,14 +72,18 @@ namespace AsyncTcp
             if (!_clientRunning)
                 return Task.CompletedTask;
 
-            return _serverPeer.Send(type, data);
+            return _peer.Send(type, data);
         }
 
-        public Task ShutDown(object data = null)
+        public Task ShutDown()
         {
             _clientRunning = false;
 
-            return _serverPeer.Send(AsyncTcp.ErrorType, data);
+            // If we never connect listener.Shutdown throws an error, so try separately
+            try { _socket.Shutdown(SocketShutdown.Both); } catch { }
+            try { _socket.Close(); } catch { }
+
+            return Task.CompletedTask;
         }
 
         private async Task KeepAlive()
@@ -83,7 +98,7 @@ namespace AsyncTcp
                 {
                     count = 0;
 
-                    await _serverPeer.Send(AsyncTcp.KeepAliveType).ConfigureAwait(false);
+                    await _peer.Send(AsyncTcp.KeepAliveType).ConfigureAwait(false);
                 }
                 else
                 {

@@ -71,12 +71,9 @@ namespace AsyncTcp
         {
             _processing = false;
 
-            try
-            {
-                _socket.Shutdown(SocketShutdown.Both);
-                _socket.Close();
-            }
-            catch { }
+            // If we never connect listener.Shutdown throws an error, so try separately
+            try { _socket.Shutdown(SocketShutdown.Both); } catch { }
+            try { _socket.Close(); } catch { }
 
             _sendChannel.Writer.TryComplete();
             _receiveChannel.Writer.TryComplete();
@@ -87,7 +84,10 @@ namespace AsyncTcp
             // Since we cannot guarantee that queued sends will even be sent out after they are queued (socket error/disconnect),
             // it doesn't make sense to throw here indicating failed queued messages after shutdown, since its a half-way solution to that problem
             if (!_processing)
+            {
+                ShutDown();
                 return;
+            }
 
             await _sendChannel
                 .Writer

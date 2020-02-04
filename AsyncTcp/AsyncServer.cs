@@ -25,7 +25,7 @@ namespace AsyncTcp
             int keepAliveInterval = AsyncTcp.KeepAliveInterval)
         {
             if (!AsyncTcp.IsInitialized)
-                throw new Exception("AsyncTcp must be initialized before creating a client");
+                throw new Exception("AsyncTcp must be initialized before creating a server");
 
             _handler = handler ?? throw new Exception("Handler cannot be null");
             _keepAliveInterval = keepAliveInterval;
@@ -44,12 +44,12 @@ namespace AsyncTcp
                     address = await Utils.GetIPAddress().ConfigureAwait(false);
                 }
 
-                HostName = address.ToString();
-
                 _listener = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
                 _listener.NoDelay = true;
                 _listener.Bind(new IPEndPoint(address, bindPort));
                 _listener.Listen(100);
+
+                HostName = address.ToString();
             }
             catch
             {
@@ -70,8 +70,9 @@ namespace AsyncTcp
             try
             {
                 // Accept all connections while server running
-                while ((socket = await _listener.AcceptAsync().ConfigureAwait(false)) != null)
+                while (true)
                 {
+                    socket = await _listener.AcceptAsync().ConfigureAwait(false);
                     socket.NoDelay = true;
                     // Add Async Task Process Socket, this task will handle the new connection until it closes
                     tasks.Add(ProcessSocket(socket));
@@ -93,7 +94,7 @@ namespace AsyncTcp
                     }
                 }
             }
-            catch(Exception e)
+            catch (Exception e)
             {
                 await LogErrorAsync(e, "Accepted Loop Exception", false).ConfigureAwait(false);
             }
@@ -101,6 +102,8 @@ namespace AsyncTcp
             await ShutDown().ConfigureAwait(false);
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
+
+            await LogMessageAsync(string.Format("Finished AsyncServer Task"), false).ConfigureAwait(false);
         }
 
         private async Task ProcessSocket(Socket socket)
@@ -118,13 +121,9 @@ namespace AsyncTcp
         {
             _serverRunning = false;
 
-            try
-            {
-                _listener.Shutdown(SocketShutdown.Both);
-                _listener.Close();
-            }
-            catch
-            { }
+            // If we never connect listener.Shutdown throws an error, so try separately
+            try { _listener.Shutdown(SocketShutdown.Both); } catch { }
+            try { _listener.Close(); } catch { }
 
             if (_peers.Count == 0)
                 return;

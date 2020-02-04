@@ -16,14 +16,20 @@ namespace ServerApp
         public async Task RunServer()
         {
             var server = new AsyncServer(this);
-            //var task = Task.Run(() => RemovePeer(server));
+            var task = Task.Run(() => Shutdown(server));
             await server.Start(IPAddress.Loopback).ConfigureAwait(false);
         }
 
         public async Task RemovePeer(AsyncServer server)
         {
-            await Task.Delay(15000).ConfigureAwait(false);
+            await Task.Delay(10000).ConfigureAwait(false);
             await server.RemovePeer(0).ConfigureAwait(false);
+        }
+
+        public async Task Shutdown(AsyncServer server)
+        {
+            await Task.Delay(10000).ConfigureAwait(false);
+            await server.ShutDown().ConfigureAwait(false);
         }
 
         public byte[] Serialize(object obj)
