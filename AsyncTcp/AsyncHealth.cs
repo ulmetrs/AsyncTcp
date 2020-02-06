@@ -52,7 +52,6 @@ namespace AsyncTcp
                     socket = await _listener.AcceptAsync().ConfigureAwait(false);
                     socket.Shutdown(SocketShutdown.Both);
                     socket.Close();
-                    await Task.Delay(AsyncTcp.KeepAliveDelay).ConfigureAwait(false);
                 }
             }
             catch (Exception e)
