@@ -29,7 +29,7 @@ namespace ServerApp
         public async Task Shutdown(AsyncServer server)
         {
             await Task.Delay(10000).ConfigureAwait(false);
-            await server.ShutDown().ConfigureAwait(false);
+            server.ShutDown();
         }
 
         public byte[] Serialize(object obj)

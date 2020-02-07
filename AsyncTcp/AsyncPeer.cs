@@ -67,7 +67,7 @@ namespace AsyncTcp
             }
         }
 
-        private void ShutDown()
+        public void ShutDown()
         {
             _processing = false;
 

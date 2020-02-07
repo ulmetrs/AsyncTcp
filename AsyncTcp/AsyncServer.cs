@@ -99,7 +99,7 @@ namespace AsyncTcp
                 await LogErrorAsync(e, "Accepted Loop Exception", false).ConfigureAwait(false);
             }
 
-            await ShutDown().ConfigureAwait(false);
+            ShutDown();
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
 
@@ -117,7 +117,7 @@ namespace AsyncTcp
             await RemovePeer(peer).ConfigureAwait(false);
         }
 
-        public async Task ShutDown(object data = null)
+        public void ShutDown()
         {
             _serverRunning = false;
 
@@ -129,12 +129,10 @@ namespace AsyncTcp
                 return;
 
             // Send Kill Signals to the Peer Sockets
-            async Task SendErrorAsync(KeyValuePair<long, AsyncPeer> kv)
+            foreach(KeyValuePair<long, AsyncPeer> kv in _peers)
             {
-                await kv.Value.Send(AsyncTcp.ErrorType, data).ConfigureAwait(false);
+                kv.Value.ShutDown();
             }
-
-            await _peers.ParallelForEachAsync(SendErrorAsync, 24).ConfigureAwait(false);
         }
 
         public Task RemovePeer(AsyncPeer peer, object data = null)

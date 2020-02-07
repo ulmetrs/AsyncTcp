@@ -58,7 +58,7 @@ namespace AsyncTcp
 
             await _peer.Process().ConfigureAwait(false);
 
-            await ShutDown().ConfigureAwait(false);
+            ShutDown();
 
             await keepAlive.ConfigureAwait(false);
 
@@ -75,15 +75,11 @@ namespace AsyncTcp
             return _peer.Send(type, data);
         }
 
-        public Task ShutDown()
+        public void ShutDown()
         {
             _clientRunning = false;
 
-            // If we never connect listener.Shutdown throws an error, so try separately
-            try { _socket.Shutdown(SocketShutdown.Both); } catch { }
-            try { _socket.Close(); } catch { }
-
-            return Task.CompletedTask;
+            _peer.ShutDown();
         }
 
         private async Task KeepAlive()

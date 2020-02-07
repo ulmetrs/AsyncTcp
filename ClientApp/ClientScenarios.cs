@@ -42,7 +42,7 @@ namespace ClientApp
 
             for (int i = 0; i < clients.Count; i++)
             {
-                await clients[i].ShutDown().ConfigureAwait(false);
+                clients[i].ShutDown();
             }
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
@@ -76,7 +76,7 @@ namespace ClientApp
 
             for (int i = 0; i < clients.Count; i++)
             {
-                await clients[i].ShutDown().ConfigureAwait(false);
+                clients[i].ShutDown();
             }
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
