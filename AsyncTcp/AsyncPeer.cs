@@ -305,12 +305,6 @@ namespace AsyncTcp
                 {
                     await LogErrorAsync(e, ReceiveErrorMessage, false).ConfigureAwait(false);
                 }
-
-                if (packet.Type == AsyncTcp.ErrorType)
-                {
-                    ShutDown();
-                    break;
-                }
             }
         }
     }
