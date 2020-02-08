@@ -6,7 +6,6 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
-using static AsyncTcp.Logging;
 using static AsyncTcp.Utils;
 
 namespace AsyncTcp
@@ -20,7 +19,7 @@ namespace AsyncTcp
         private IAsyncHandler _handler;
         private Channel<ObjectPacket> _sendChannel;
         private Channel<BytePacket> _receiveChannel;
-        private bool _processing;
+        private CancellationTokenSource _channelCancel;
 
         // Peers are constructed from connected sockets
         internal AsyncPeer(
@@ -33,8 +32,10 @@ namespace AsyncTcp
 
         internal async Task Process()
         {
-            _sendChannel = Channel.CreateUnbounded<ObjectPacket>();
-            _receiveChannel = Channel.CreateUnbounded<BytePacket>();
+            _sendChannel = Channel.CreateUnbounded<ObjectPacket>(new UnboundedChannelOptions() { AllowSynchronousContinuations = true, SingleReader = true });
+            _receiveChannel = Channel.CreateUnbounded<BytePacket>(new UnboundedChannelOptions() { AllowSynchronousContinuations = true, SingleReader = true, SingleWriter = true });
+            // Token for ios breaking out of reads
+            _channelCancel = new CancellationTokenSource();
 
             // There are many pipe options we can play with
             //var options = new PipeOptions(pauseWriterThreshold: 10, resumeWriterThreshold: 5);
@@ -44,125 +45,107 @@ namespace AsyncTcp
             var parseTask = ParseBytes(pipe.Reader);
             var processTask = ProcessPacket();
 
-            _processing = true;
-
-            try
-            {
-                await _handler.PeerConnected(this).ConfigureAwait(false);
-            }
-            catch (Exception e)
-            {
-                await LogErrorAsync(e, PeerConnectedErrorMessage, false).ConfigureAwait(false);
-            }
+            try { await _handler.PeerConnected(this).ConfigureAwait(false); } catch { }
 
             await Task.WhenAll(sendTask, receiveTask, parseTask, processTask).ConfigureAwait(false);
 
-            try
-            {
-                await _handler.PeerDisconnected(this).ConfigureAwait(false);
-            }
-            catch (Exception e)
-            {
-                await LogErrorAsync(e, PeerRemovedErrorMessage, false).ConfigureAwait(false);
-            }
+            try { await _handler.PeerDisconnected(this).ConfigureAwait(false); } catch { }
         }
 
         public void ShutDown()
         {
-            _processing = false;
-
             // If we never connect listener.Shutdown throws an error, so try separately
             try { _socket.Shutdown(SocketShutdown.Both); } catch { }
             try { _socket.Close(); } catch { }
 
             _sendChannel.Writer.TryComplete();
             _receiveChannel.Writer.TryComplete();
+            _channelCancel.Cancel();
         }
 
         public async Task Send(int type, object data = null)
         {
-            // Since we cannot guarantee that queued sends will even be sent out after they are queued (socket error/disconnect),
-            // it doesn't make sense to throw here indicating failed queued messages after shutdown, since its a half-way solution to that problem
-            if (!_processing)
+            // Channel can close at any time
+            try
             {
-                ShutDown();
-                return;
+                await _sendChannel
+                   .Writer
+                   .WriteAsync(new ObjectPacket() { Type = type, Data = data }, _channelCancel.Token)
+                   .ConfigureAwait(false);
             }
-
-            await _sendChannel
-                .Writer
-                .WriteAsync(new ObjectPacket() { Type = type, Data = data })
-                .ConfigureAwait(false);
+            catch
+            { }
         }
 
         private async Task ProcessSend()
         {
-            while (await _sendChannel.Reader.WaitToReadAsync().ConfigureAwait(false))
+            while (await _sendChannel.Reader.WaitToReadAsync(_channelCancel.Token).ConfigureAwait(false))
             {
-                var packet = await _sendChannel.Reader.ReadAsync().ConfigureAwait(false);
-
-                if (packet.Data == null)
+                while (_sendChannel.Reader.TryRead(out var packet))
                 {
-                    int bytesSent = 0;
-                    try
+                    if (packet.Data == null)
                     {
-                        while (bytesSent < AsyncTcp.HeaderSize)
+                        int bytesSent = 0;
+                        try
                         {
-                            bytesSent += await _socket
-                                .SendAsync(new ArraySegment<byte>(AsyncTcp.HeaderBytes(packet.Type), bytesSent, AsyncTcp.HeaderSize - bytesSent), SocketFlags.None)
-                                .ConfigureAwait(false);
+                            while (bytesSent < AsyncTcp.HeaderSize)
+                            {
+                                bytesSent += await _socket
+                                    .SendAsync(new ArraySegment<byte>(AsyncTcp.HeaderBytes(packet.Type), bytesSent, AsyncTcp.HeaderSize - bytesSent), SocketFlags.None)
+                                    .ConfigureAwait(false);
+                            }
+                        }
+                        catch
+                        {
+                            ShutDown();
+                            break;
                         }
                     }
-                    catch
+                    else
+                    {
+                        var useCompression = false;
+                        var bytes = AsyncTcp.Serializer.Serialize(packet.Data);
+
+                        if (AsyncTcp.UseCompression && bytes.Length >= AsyncTcp.CompressionCuttoff)
+                        {
+                            useCompression = true;
+                            bytes = await CompressWithGzipAsync(bytes).ConfigureAwait(false);
+                        }
+
+                        var size = AsyncTcp.HeaderSize + bytes.Length;
+                        var buffer = ArrayPool<byte>.Shared.Rent(size);
+                        BitConverter.GetBytes(packet.Type).CopyTo(buffer, AsyncTcp.TypeOffset);
+                        BitConverter.GetBytes(bytes.Length).CopyTo(buffer, AsyncTcp.LengthOffset);
+                        BitConverter.GetBytes(useCompression).CopyTo(buffer, AsyncTcp.CompressedOffset);
+                        bytes.CopyTo(buffer, AsyncTcp.HeaderSize);
+
+                        int bytesSent = 0;
+                        try
+                        {
+                            while (bytesSent < size)
+                            {
+                                bytesSent += await _socket
+                                    .SendAsync(new ArraySegment<byte>(buffer, bytesSent, size - bytesSent), SocketFlags.None)
+                                    .ConfigureAwait(false);
+                            }
+                        }
+                        catch
+                        {
+                            ShutDown();
+                            break;
+                        }
+                        finally
+                        {
+                            ArrayPool<byte>.Shared.Return(buffer);
+                        }
+                    }
+
+                    // We send an error from the server so that the client can retrieve an error reason, but we don't want to wait for the client to shutdown
+                    if (packet.Type == AsyncTcp.ErrorType)
                     {
                         ShutDown();
                         break;
                     }
-                }
-                else
-                {
-                    var useCompression = false;
-                    var bytes = AsyncTcp.Serializer.Serialize(packet.Data);
-
-                    if (AsyncTcp.UseCompression && bytes.Length >= AsyncTcp.CompressionCuttoff)
-                    {
-                        useCompression = true;
-                        bytes = await CompressWithGzipAsync(bytes).ConfigureAwait(false);
-                    }
-
-                    var size = AsyncTcp.HeaderSize + bytes.Length;
-                    var buffer = ArrayPool<byte>.Shared.Rent(size);
-                    BitConverter.GetBytes(packet.Type).CopyTo(buffer, AsyncTcp.TypeOffset);
-                    BitConverter.GetBytes(bytes.Length).CopyTo(buffer, AsyncTcp.LengthOffset);
-                    BitConverter.GetBytes(useCompression).CopyTo(buffer, AsyncTcp.CompressedOffset);
-                    bytes.CopyTo(buffer, AsyncTcp.HeaderSize);
-
-                    int bytesSent = 0;
-                    try
-                    {
-                        while (bytesSent < size)
-                        {
-                            bytesSent += await _socket
-                                .SendAsync(new ArraySegment<byte>(buffer, bytesSent, size - bytesSent), SocketFlags.None)
-                                .ConfigureAwait(false);
-                        }
-                    }
-                    catch
-                    {
-                        ShutDown();
-                        break;
-                    }
-                    finally
-                    {
-                        ArrayPool<byte>.Shared.Return(buffer);
-                    }
-                }
-
-                // We send an error from the server so that the client can retrieve an error reason, but we don't want to wait for the client to shutdown
-                if (packet.Type == AsyncTcp.ErrorType)
-                {
-                    ShutDown();
-                    break;
                 }
             }
         }
@@ -187,10 +170,9 @@ namespace AsyncTcp
                     }
                     writer.Advance(bytesRead);
                 }
-                catch (Exception ex)
+                catch
                 {
                     ShutDown();
-                    await LogErrorAsync(ex, ReceiveErrorMessage, false).ConfigureAwait(false);
                     break;
                 }
 
@@ -220,10 +202,16 @@ namespace AsyncTcp
                     if (packet.Item1 == AsyncTcp.KeepAliveType)
                         continue;
 
-                    await _receiveChannel
-                        .Writer
-                        .WriteAsync(new BytePacket() { Type = packet.Item1, Compressed = packet.Item2, Bytes = packet.Item3 })
-                        .ConfigureAwait(false);
+                    // Channel can close at any time
+                    try
+                    {
+                        await _receiveChannel
+                            .Writer
+                            .WriteAsync(new BytePacket() { Type = packet.Item1, Compressed = packet.Item2, Bytes = packet.Item3 }, _channelCancel.Token)
+                            .ConfigureAwait(false);
+                    }
+                    catch
+                    { }
                 }
 
                 reader.AdvanceTo(buffer.Start, buffer.End);
@@ -272,38 +260,29 @@ namespace AsyncTcp
 
         private async Task ProcessPacket()
         {
-            while (await _receiveChannel.Reader.WaitToReadAsync().ConfigureAwait(false))
+            while (await _receiveChannel.Reader.WaitToReadAsync(_channelCancel.Token).ConfigureAwait(false))
             {
-                var packet = await _receiveChannel.Reader.ReadAsync().ConfigureAwait(false);
-
-                var bytes = packet.Bytes;
-
-                object data = null;
-
-                if (bytes != null)
+                while (_receiveChannel.Reader.TryRead(out var packet))
                 {
-                    try
+                    var bytes = packet.Bytes;
+
+                    object data = null;
+
+                    if (bytes != null)
                     {
-                        if (packet.Compressed)
+                        try
                         {
-                            bytes = await DecompressWithGzipAsync(bytes).ConfigureAwait(false);
+                            if (packet.Compressed)
+                            {
+                                bytes = await DecompressWithGzipAsync(bytes).ConfigureAwait(false);
+                            }
+
+                            data = AsyncTcp.Serializer.Deserialize(packet.Type, bytes);
                         }
-
-                        data = AsyncTcp.Serializer.Deserialize(packet.Type, bytes);
+                        catch { }
                     }
-                    catch (Exception e)
-                    {
-                        await LogErrorAsync(e, ReceiveErrorMessage, false).ConfigureAwait(false);
-                    }
-                }
 
-                try
-                {
-                    await _handler.PacketReceived(this, packet.Type, data).ConfigureAwait(false);
-                }
-                catch (Exception e)
-                {
-                    await LogErrorAsync(e, ReceiveErrorMessage, false).ConfigureAwait(false);
+                    try { await _handler.PacketReceived(this, packet.Type, data).ConfigureAwait(false); } catch  { }
                 }
             }
         }
