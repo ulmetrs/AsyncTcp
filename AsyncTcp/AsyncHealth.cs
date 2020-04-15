@@ -50,8 +50,8 @@ namespace AsyncTcp
                 while (true)
                 {
                     socket = await _listener.AcceptAsync().ConfigureAwait(false);
-                    socket.Shutdown(SocketShutdown.Both);
-                    socket.Close();
+                    try { socket.Shutdown(SocketShutdown.Both); } catch { }
+                    try { socket.Close(); } catch { }
                 }
             }
             catch (Exception e)
@@ -59,20 +59,16 @@ namespace AsyncTcp
                 await LogErrorAsync(e, "Accepted Loop Exception", true).ConfigureAwait(false);
             }
 
-            await ShutDown().ConfigureAwait(false);
-
-            await LogMessageAsync(string.Format("Finished AsyncHealth Task"), false).ConfigureAwait(false);
+            ShutDown();
         }
 
-        public Task ShutDown()
+        public void ShutDown()
         {
             _serverRunning = false;
 
             // If we never connect listener.Shutdown throws an error, so try separately
             try { _listener.Shutdown(SocketShutdown.Both); } catch { }
             try { _listener.Close(); } catch { }
-
-            return Task.CompletedTask;
         }
     }
 }

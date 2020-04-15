@@ -102,8 +102,6 @@ namespace AsyncTcp
             ShutDown();
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
-
-            await LogMessageAsync(string.Format("Finished AsyncServer Task"), false).ConfigureAwait(false);
         }
 
         private async Task ProcessSocket(Socket socket)

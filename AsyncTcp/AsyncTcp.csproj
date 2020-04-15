@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <Authors>Robert Ulmet</Authors>
-    <Version>1.2.6</Version>
+    <Version>1.2.7</Version>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <ApplicationIcon />
     <OutputType>Library</OutputType>
