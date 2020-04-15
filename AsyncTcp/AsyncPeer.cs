@@ -17,6 +17,8 @@ namespace AsyncTcp
 
         private Socket _socket;
         private IAsyncHandler _handler;
+
+        private bool _shutdown;
         private Channel<ObjectPacket> _sendChannel;
         private Channel<BytePacket> _receiveChannel;
         private CancellationTokenSource _channelCancel;
@@ -30,16 +32,19 @@ namespace AsyncTcp
             _handler = handler;
         }
 
+        // The idea here is that every connected peer "Processes" until its done, the peer should not be reused.
         internal async Task Process()
         {
+            _shutdown = false;
             _sendChannel = Channel.CreateUnbounded<ObjectPacket>(new UnboundedChannelOptions() { AllowSynchronousContinuations = true, SingleReader = true });
             _receiveChannel = Channel.CreateUnbounded<BytePacket>(new UnboundedChannelOptions() { AllowSynchronousContinuations = true, SingleReader = true, SingleWriter = true });
-            // Token for ios breaking out of reads
             _channelCancel = new CancellationTokenSource();
 
             // There are many pipe options we can play with
             //var options = new PipeOptions(pauseWriterThreshold: 10, resumeWriterThreshold: 5);
             var pipe = new Pipe();
+
+            // Start the 4 Running Processing Steps for a Peer
             var sendTask = ProcessSend();
             var receiveTask = ReceiveFromSocket(pipe.Writer);
             var parseTask = ParseBytes(pipe.Reader);
@@ -52,17 +57,27 @@ namespace AsyncTcp
             try { await _handler.PeerDisconnected(this).ConfigureAwait(false); } catch { }
         }
 
+        // Shutdown processing at any point via error, via error message, or manually
         public void ShutDown()
         {
-            // If we never connect listener.Shutdown throws an error, so try separately
-            try { _socket.Shutdown(SocketShutdown.Both); } catch { }
-            try { _socket.Close(); } catch { }
-
+            // This prevents us from re-entering the 'WaitToReadAsync' loop after a shutdown call, but
+            // does not break us out.  Its possible to re-enter the 'WaitToReadAsync' AFTER the
+            // TryComplete and CancellationTokens are invoked, we need to cover both to avoid getting
+            // the process stuck
+            _shutdown = true;
+            // We force close the channels, and in most scenarios the tryComplete successfully breaks
+            // us out of the 'WaitToReadAsync' call on the channel's reader so the task can complete
             _sendChannel.Writer.TryComplete();
             _receiveChannel.Writer.TryComplete();
+            // IOS would not break us out of the 'WaitToReadAsync' but this did
             _channelCancel.Cancel();
+            // Idiosynchrosies for socket class throw exceptions in various scenarios,
+            // I just want it ShutDown and Closed at all costs
+            try { _socket.Shutdown(SocketShutdown.Both); } catch { }
+            try { _socket.Close(); } catch { }
         }
 
+        // Queue messages in the SendChannel for processing, swallow on error
         public async Task Send(int type, object data = null)
         {
             // Channel can close at any time
@@ -77,12 +92,16 @@ namespace AsyncTcp
             { }
         }
 
+        // Processes the SendChannel Queue of messages and sends them through the socket
         private async Task ProcessSend()
         {
-            while (await _sendChannel.Reader.WaitToReadAsync(_channelCancel.Token).ConfigureAwait(false))
+            // Waits for a signal from the channel that data is ready to be read
+            while (!_shutdown && await _sendChannel.Reader.WaitToReadAsync(_channelCancel.Token).ConfigureAwait(false))
             {
+                // Once signaled, continuously read data while it is available
                 while (_sendChannel.Reader.TryRead(out var packet))
                 {
+                    // Header-only messages are optimized since we cache the HeaderBytes and don't need to rebuild them
                     if (packet.Data == null)
                     {
                         int bytesSent = 0;
@@ -114,6 +133,7 @@ namespace AsyncTcp
 
                         var size = AsyncTcp.HeaderSize + bytes.Length;
                         var buffer = ArrayPool<byte>.Shared.Rent(size);
+                        // TODO there should be more efficient memory-methods of copying int and bool values to the array
                         BitConverter.GetBytes(packet.Type).CopyTo(buffer, AsyncTcp.TypeOffset);
                         BitConverter.GetBytes(bytes.Length).CopyTo(buffer, AsyncTcp.LengthOffset);
                         BitConverter.GetBytes(useCompression).CopyTo(buffer, AsyncTcp.CompressedOffset);
@@ -140,7 +160,8 @@ namespace AsyncTcp
                         }
                     }
 
-                    // We send an error from the server so that the client can retrieve an error reason, but we don't want to wait for the client to shutdown
+                    // If the packet type is of ErrorType this indicates that we want to immediately Shutdown the peer
+                    // after the message is sent
                     if (packet.Type == AsyncTcp.ErrorType)
                     {
                         ShutDown();
@@ -150,6 +171,7 @@ namespace AsyncTcp
             }
         }
 
+        // Pipelines optimized method of Receiving socket bytes
         private async Task ReceiveFromSocket(PipeWriter writer)
         {
             Memory<byte> memory;
@@ -187,6 +209,10 @@ namespace AsyncTcp
             await writer.CompleteAsync().ConfigureAwait(false);
         }
 
+        // Pipelines optimized method of Parsing socket bytes
+        // We immediately Queue messages into the Receive Channel for Asynchronous processing
+        // as we don't want the serialization/compression/handler callback to block us from
+        // reading sequential messages from the socket
         private async Task ParseBytes(PipeReader reader)
         {
             ReadResult result;
@@ -225,7 +251,9 @@ namespace AsyncTcp
             await reader.CompleteAsync().ConfigureAwait(false);
         }
 
-        // Honestly, a Delimiter character might be worth using, that way we can grab the entire sequence, parse out the header from the slice and do the same for the buffer
+        // We use a type-length strategy of demarcating messages, this probably would be faster if we had
+        // more optimized int/bool parsing from the slice and not 'BitConverter'
+        // Another strategy is the Special character 'EOL' way of splitting messages
         private bool TryParseBuffer(ref ReadOnlySequence<byte> buffer, out Tuple<int, bool, byte[]> packet)
         {
             if (buffer.Length < AsyncTcp.HeaderSize)
@@ -258,9 +286,10 @@ namespace AsyncTcp
             return true;
         }
 
+        // Processes the ReceiveChannel Queue of messages and Sends them to the Handler's PacketReceived callback
         private async Task ProcessPacket()
         {
-            while (await _receiveChannel.Reader.WaitToReadAsync(_channelCancel.Token).ConfigureAwait(false))
+            while (!_shutdown && await _receiveChannel.Reader.WaitToReadAsync(_channelCancel.Token).ConfigureAwait(false))
             {
                 while (_receiveChannel.Reader.TryRead(out var packet))
                 {
