@@ -15,10 +15,10 @@ namespace AsyncTcp
         private static long GlobalPeerId = -1;
         public long PeerId { get; } = Interlocked.Increment(ref GlobalPeerId);
 
-        private Socket _socket;
-        private IAsyncHandler _handler;
+        private readonly Socket _socket;
+        private readonly IAsyncHandler _handler;
 
-        private bool _shutdown;
+        private bool _alive;
         private Channel<ObjectPacket> _sendChannel;
         private Channel<BytePacket> _receiveChannel;
         private CancellationTokenSource _channelCancel;
@@ -26,7 +26,7 @@ namespace AsyncTcp
         // Peers are constructed from connected sockets
         internal AsyncPeer(
             Socket socket,
-            IAsyncHandler handler )
+            IAsyncHandler handler)
         {
             _socket = socket;
             _handler = handler;
@@ -35,7 +35,7 @@ namespace AsyncTcp
         // The idea here is that every connected peer "Processes" until its done, the peer should not be reused.
         internal async Task Process()
         {
-            _shutdown = false;
+            _alive = true;
             _sendChannel = Channel.CreateUnbounded<ObjectPacket>(new UnboundedChannelOptions() { AllowSynchronousContinuations = true, SingleReader = true });
             _receiveChannel = Channel.CreateUnbounded<BytePacket>(new UnboundedChannelOptions() { AllowSynchronousContinuations = true, SingleReader = true, SingleWriter = true });
             _channelCancel = new CancellationTokenSource();
@@ -45,16 +45,16 @@ namespace AsyncTcp
             var pipe = new Pipe();
 
             // Start the 4 Running Processing Steps for a Peer
-            var sendTask = ProcessSend();
-            var receiveTask = ReceiveFromSocket(pipe.Writer);
-            var parseTask = ParseBytes(pipe.Reader);
-            var processTask = ProcessPacket();
+            var sendTask = Task.Run(ProcessSend);
+            var receiveTask = Task.Run(() => ReceiveFromSocket(pipe.Writer));
+            var parseTask = Task.Run(() => ParseBytes(pipe.Reader));
+            var processTask = Task.Run(ProcessPacket);
 
-            try { await _handler.PeerConnected(this).ConfigureAwait(false); } catch { }
+            await _handler.PeerConnected(this).ConfigureAwait(false);
 
             await Task.WhenAll(sendTask, receiveTask, parseTask, processTask).ConfigureAwait(false);
 
-            try { await _handler.PeerDisconnected(this).ConfigureAwait(false); } catch { }
+            await _handler.PeerDisconnected(this).ConfigureAwait(false);
         }
 
         // Shutdown processing at any point via error, via error message, or manually
@@ -64,7 +64,7 @@ namespace AsyncTcp
             // does not break us out.  Its possible to re-enter the 'WaitToReadAsync' AFTER the
             // TryComplete and CancellationTokens are invoked, we need to cover both to avoid getting
             // the process stuck
-            _shutdown = true;
+            _alive = false;
             // We force close the channels, and in most scenarios the tryComplete successfully breaks
             // us out of the 'WaitToReadAsync' call on the channel's reader so the task can complete
             _sendChannel.Writer.TryComplete();
@@ -96,7 +96,7 @@ namespace AsyncTcp
         private async Task ProcessSend()
         {
             // Waits for a signal from the channel that data is ready to be read
-            while (!_shutdown && await _sendChannel.Reader.WaitToReadAsync(_channelCancel.Token).ConfigureAwait(false))
+            while (_alive && await _sendChannel.Reader.WaitToReadAsync(_channelCancel.Token).ConfigureAwait(false))
             {
                 // Once signaled, continuously read data while it is available
                 while (_sendChannel.Reader.TryRead(out var packet))
@@ -289,7 +289,7 @@ namespace AsyncTcp
         // Processes the ReceiveChannel Queue of messages and Sends them to the Handler's PacketReceived callback
         private async Task ProcessPacket()
         {
-            while (!_shutdown && await _receiveChannel.Reader.WaitToReadAsync(_channelCancel.Token).ConfigureAwait(false))
+            while (_alive && await _receiveChannel.Reader.WaitToReadAsync(_channelCancel.Token).ConfigureAwait(false))
             {
                 while (_receiveChannel.Reader.TryRead(out var packet))
                 {

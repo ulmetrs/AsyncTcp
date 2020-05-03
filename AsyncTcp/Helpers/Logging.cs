@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Threading.Tasks;
-using static AsyncTcp.Values;
 
 namespace AsyncTcp
 {
@@ -12,6 +11,11 @@ namespace AsyncTcp
         public const string ReceiveErrorMessage = "Received Error: {0}";
         public const string PeerConnectedErrorMessage = "Peer Connected Error: {0}";
         public const string PeerRemovedErrorMessage = "Peer Disconnected Error: {0}";
+
+        // Tracers
+        public const string SimpleTracerMessageFormatter = "{0}: {1}";
+        public const string SimpleErrorTracerFormatter = "{0}:\nError: {1}\n\n{2}\n\n";
+        public const string SimpleErrorTracerMessageFormatter = "{0}: {1}\n\nError: {2}\n\n{3}\n\n";
 
         // TODO: Connect Trace LogProvider to AWS CloudWatch (Setup app.config for Trace LogProvider)
         public static async Task LogMessageAsync(string message, bool printToConsole = false)

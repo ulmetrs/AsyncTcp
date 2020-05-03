@@ -26,12 +26,7 @@ namespace AsyncTcp
                 }
             }
             // Else return the first address
-            if (ipHostInfo.AddressList.Length > 0)
-            {
-                return ipHostInfo.AddressList[0];
-            }
-            // Else return null
-            return null;
+            return ipHostInfo.AddressList.FirstOrDefault();
         }
 
         public static async Task<byte[]> CompressWithGzipAsync(byte[] input)
@@ -77,7 +72,7 @@ namespace AsyncTcp
                     .Create(source)
                     .GetPartitions(maxDoP)
                     .AsParallel()
-                    .Select(p => AwaitPartition(p)));
+                    .Select(AwaitPartition));
         }
     }
 }
