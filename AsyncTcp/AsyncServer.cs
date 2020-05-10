@@ -44,8 +44,7 @@ namespace AsyncTcp
                 address = await Utils.GetIPAddress().ConfigureAwait(false);
             }
 
-            _listener = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            _listener.NoDelay = true;
+            _listener = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
             _listener.Bind(new IPEndPoint(address, bindPort));
             _listener.Listen(100);
 

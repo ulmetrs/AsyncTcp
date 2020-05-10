@@ -17,11 +17,12 @@ namespace AsyncTcp
 
         private readonly Socket _socket;
         private readonly IAsyncHandler _handler;
+        private readonly Channel<ObjectPacket> _sendChannel;
+        private readonly CancellationTokenSource _sendCancel;
+        private readonly Channel<BytePacket> _receiveChannel;
+        private readonly CancellationTokenSource _receiveCancel;
 
         private bool _alive;
-        private Channel<ObjectPacket> _sendChannel;
-        private Channel<BytePacket> _receiveChannel;
-        private CancellationTokenSource _channelCancel;
 
         // Peers are constructed from connected sockets
         internal AsyncPeer(
@@ -30,15 +31,17 @@ namespace AsyncTcp
         {
             _socket = socket;
             _handler = handler;
+            _sendChannel = Channel.CreateUnbounded<ObjectPacket>(new UnboundedChannelOptions() { SingleReader = true });
+            _sendCancel = new CancellationTokenSource();
+            _receiveChannel = Channel.CreateUnbounded<BytePacket>(new UnboundedChannelOptions() { SingleWriter = true, SingleReader = true });
+            _receiveCancel = new CancellationTokenSource();
+
         }
 
         // The idea here is that every connected peer "Processes" until its done, the peer should not be reused.
         internal async Task Process()
         {
             _alive = true;
-            _sendChannel = Channel.CreateUnbounded<ObjectPacket>(new UnboundedChannelOptions() { AllowSynchronousContinuations = true, SingleReader = true });
-            _receiveChannel = Channel.CreateUnbounded<BytePacket>(new UnboundedChannelOptions() { AllowSynchronousContinuations = true, SingleReader = true, SingleWriter = true });
-            _channelCancel = new CancellationTokenSource();
 
             // There are many pipe options we can play with
             //var options = new PipeOptions(pauseWriterThreshold: 10, resumeWriterThreshold: 5);
@@ -70,7 +73,8 @@ namespace AsyncTcp
             _sendChannel.Writer.TryComplete();
             _receiveChannel.Writer.TryComplete();
             // IOS would not break us out of the 'WaitToReadAsync' but this did
-            _channelCancel.Cancel();
+            _sendCancel.Cancel();
+            _receiveCancel.Cancel();
             // Idiosynchrosies for socket class throw exceptions in various scenarios,
             // I just want it ShutDown and Closed at all costs
             try { _socket.Shutdown(SocketShutdown.Both); } catch { }
@@ -80,12 +84,15 @@ namespace AsyncTcp
         // Queue messages in the SendChannel for processing, swallow on error
         public async Task Send(int type, object data = null)
         {
-            // Channel can close at any time
+            if (!_alive)
+                return;
+
+            // Channel can close at any time, so lets swallow error?
             try
             {
                 await _sendChannel
                    .Writer
-                   .WriteAsync(new ObjectPacket() { Type = type, Data = data }, _channelCancel.Token)
+                   .WriteAsync(new ObjectPacket() { Type = type, Data = data }, _sendCancel.Token)
                    .ConfigureAwait(false);
             }
             catch
@@ -96,7 +103,7 @@ namespace AsyncTcp
         private async Task ProcessSend()
         {
             // Waits for a signal from the channel that data is ready to be read
-            while (_alive && await _sendChannel.Reader.WaitToReadAsync(_channelCancel.Token).ConfigureAwait(false))
+            while (_alive && await _sendChannel.Reader.WaitToReadAsync(_sendCancel.Token).ConfigureAwait(false))
             {
                 // Once signaled, continuously read data while it is available
                 while (_sendChannel.Reader.TryRead(out var packet))
@@ -117,7 +124,7 @@ namespace AsyncTcp
                         catch
                         {
                             ShutDown();
-                            break;
+                            return;
                         }
                     }
                     else
@@ -152,7 +159,7 @@ namespace AsyncTcp
                         catch
                         {
                             ShutDown();
-                            break;
+                            return;
                         }
                         finally
                         {
@@ -165,7 +172,7 @@ namespace AsyncTcp
                     if (packet.Type == AsyncTcp.ErrorType)
                     {
                         ShutDown();
-                        break;
+                        return;
                     }
                 }
             }
@@ -233,7 +240,7 @@ namespace AsyncTcp
                     {
                         await _receiveChannel
                             .Writer
-                            .WriteAsync(new BytePacket() { Type = packet.Item1, Compressed = packet.Item2, Bytes = packet.Item3 }, _channelCancel.Token)
+                            .WriteAsync(new BytePacket() { Type = packet.Item1, Compressed = packet.Item2, Bytes = packet.Item3 }, _receiveCancel.Token)
                             .ConfigureAwait(false);
                     }
                     catch
@@ -289,7 +296,7 @@ namespace AsyncTcp
         // Processes the ReceiveChannel Queue of messages and Sends them to the Handler's PacketReceived callback
         private async Task ProcessPacket()
         {
-            while (_alive && await _receiveChannel.Reader.WaitToReadAsync(_channelCancel.Token).ConfigureAwait(false))
+            while (_alive && await _receiveChannel.Reader.WaitToReadAsync(_receiveCancel.Token).ConfigureAwait(false))
             {
                 while (_receiveChannel.Reader.TryRead(out var packet))
                 {
@@ -311,7 +318,7 @@ namespace AsyncTcp
                         catch { }
                     }
 
-                    try { await _handler.PacketReceived(this, packet.Type, data).ConfigureAwait(false); } catch  { }
+                    try { await _handler.PacketReceived(this, packet.Type, data).ConfigureAwait(false); } catch { }
                 }
             }
         }

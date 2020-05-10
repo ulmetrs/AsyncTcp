@@ -10,7 +10,6 @@ namespace AsyncTcp
         private readonly IAsyncHandler _handler;
         private readonly int _keepAliveInterval;
 
-        private Socket _socket;
         private AsyncPeer _peer;
         private bool _alive;
 
@@ -30,11 +29,12 @@ namespace AsyncTcp
             if (_alive)
                 throw new Exception("Cannot start client while alive");
 
-            _socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            _socket.NoDelay = true;
-            await _socket.ConnectAsync(new IPEndPoint(address, bindPort)).ConfigureAwait(false);
+            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            await socket
+                .ConnectAsync(new IPEndPoint(address, bindPort))
+                .ConfigureAwait(false);
 
-            _peer = new AsyncPeer(_socket, _handler);
+            _peer = new AsyncPeer(socket, _handler);
 
             _alive = true;
 
@@ -42,17 +42,21 @@ namespace AsyncTcp
 
             try
             {
-                await _peer.Process().ConfigureAwait(false);
+                await _peer
+                    .Process()
+                    .ConfigureAwait(false);
             }
             catch
             {
                 ShutDown();
-                await keepAlive.ConfigureAwait(false);
+                await keepAlive
+                    .ConfigureAwait(false);
                 throw;
             }
 
             ShutDown();
-            await keepAlive.ConfigureAwait(false);
+            await keepAlive
+                .ConfigureAwait(false);
         }
 
         public Task Send(int type, object data = null)
@@ -79,7 +83,7 @@ namespace AsyncTcp
             while (_alive)
             {
                 await Task.Delay(AsyncTcp.KeepAliveDelay).ConfigureAwait(false);
-                
+
                 if (count == _keepAliveInterval)
                 {
                     count = 0;
