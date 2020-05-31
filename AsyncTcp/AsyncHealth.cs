@@ -2,7 +2,6 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
-using static AsyncTcp.Logging;
 
 namespace AsyncTcp
 {
@@ -20,23 +19,18 @@ namespace AsyncTcp
         public async Task Start(IPAddress address = null, int bindPort = 9050)
         {
             if (_alive)
-                throw new Exception("Cannot Start, Server is running");
+                throw new Exception("Cannot start, server is running");
 
             if (address == null)
-            {
                 address = await Utils.GetIPAddress().ConfigureAwait(false);
-            }
 
-            _listener = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            _listener.NoDelay = true;
+            _listener = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
             _listener.Bind(new IPEndPoint(address, bindPort));
             _listener.Listen(100);
 
-            HostName = address.ToString();
-
-            await LogMessageAsync(string.Format(HostnameMessage, HostName, address, bindPort), false).ConfigureAwait(false);
-
             _alive = true;
+
+            HostName = address.ToString();
 
             Socket socket;
             try
@@ -48,10 +42,7 @@ namespace AsyncTcp
                     try { socket.Close(); } catch { }
                 }
             }
-            catch (Exception e)
-            {
-                await LogErrorAsync(e, "Accepted Loop Exception", true).ConfigureAwait(false);
-            }
+            catch { }
 
             ShutDown();
         }
@@ -59,8 +50,6 @@ namespace AsyncTcp
         public void ShutDown()
         {
             _alive = false;
-
-            // If we never connect listener.Shutdown throws an error, so try separately
             try { _listener.Shutdown(SocketShutdown.Both); } catch { }
             try { _listener.Close(); } catch { }
         }

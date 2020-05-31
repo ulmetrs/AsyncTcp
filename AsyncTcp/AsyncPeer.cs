@@ -19,8 +19,6 @@ namespace AsyncTcp
         private readonly IAsyncHandler _handler;
         private readonly Channel<ObjectPacket> _sendChannel;
         private readonly CancellationTokenSource _sendCancel;
-        private readonly Channel<BytePacket> _receiveChannel;
-        private readonly CancellationTokenSource _receiveCancel;
 
         private bool _alive;
 
@@ -33,9 +31,6 @@ namespace AsyncTcp
             _handler = handler;
             _sendChannel = Channel.CreateUnbounded<ObjectPacket>(new UnboundedChannelOptions() { SingleReader = true });
             _sendCancel = new CancellationTokenSource();
-            _receiveChannel = Channel.CreateUnbounded<BytePacket>(new UnboundedChannelOptions() { SingleWriter = true, SingleReader = true });
-            _receiveCancel = new CancellationTokenSource();
-
         }
 
         // The idea here is that every connected peer "Processes" until its done, the peer should not be reused.
@@ -48,21 +43,16 @@ namespace AsyncTcp
             var pipe = new Pipe();
 
             // Start the 4 Running Processing Steps for a Peer
-            var sendTask = Task.Run(ProcessSend);
             var receiveTask = Task.Run(() => ReceiveFromSocket(pipe.Writer));
             var parseTask = Task.Run(() => ParseBytes(pipe.Reader));
-            var processTask = Task.Run(ProcessPacket);
+            var sendTask = Task.Run(() => ProcessSend());
+            var keepAliveTask = Task.Run(() => KeepAlive());
 
             await _handler.PeerConnected(this).ConfigureAwait(false);
 
-            await Task.WhenAll(sendTask, receiveTask, parseTask, processTask).ConfigureAwait(false);
+            // Wait for sockets to close and parsing to finish
+            await Task.WhenAll(receiveTask, parseTask).ConfigureAwait(false);
 
-            await _handler.PeerDisconnected(this).ConfigureAwait(false);
-        }
-
-        // Shutdown processing at any point via error, via error message, or manually
-        public void ShutDown()
-        {
             // This prevents us from re-entering the 'WaitToReadAsync' loop after a shutdown call, but
             // does not break us out.  Its possible to re-enter the 'WaitToReadAsync' AFTER the
             // TryComplete and CancellationTokens are invoked, we need to cover both to avoid getting
@@ -71,10 +61,18 @@ namespace AsyncTcp
             // We force close the channels, and in most scenarios the tryComplete successfully breaks
             // us out of the 'WaitToReadAsync' call on the channel's reader so the task can complete
             _sendChannel.Writer.TryComplete();
-            _receiveChannel.Writer.TryComplete();
             // IOS would not break us out of the 'WaitToReadAsync' but this did
             _sendCancel.Cancel();
-            _receiveCancel.Cancel();
+
+            // Wait for the remaining tasks to finish
+            await Task.WhenAll(sendTask, keepAliveTask).ConfigureAwait(false);
+
+            await _handler.PeerDisconnected(this).ConfigureAwait(false);
+        }
+
+        // Shutdown processing at any point via error, via error message, or manually
+        public void ShutDown()
+        {
             // Idiosynchrosies for socket class throw exceptions in various scenarios,
             // I just want it ShutDown and Closed at all costs
             try { _socket.Shutdown(SocketShutdown.Both); } catch { }
@@ -84,10 +82,6 @@ namespace AsyncTcp
         // Queue messages in the SendChannel for processing, swallow on error
         public async Task Send(int type, object data = null)
         {
-            if (!_alive)
-                return;
-
-            // Channel can close at any time, so lets swallow error?
             try
             {
                 await _sendChannel
@@ -95,87 +89,7 @@ namespace AsyncTcp
                    .WriteAsync(new ObjectPacket() { Type = type, Data = data }, _sendCancel.Token)
                    .ConfigureAwait(false);
             }
-            catch
-            { }
-        }
-
-        // Processes the SendChannel Queue of messages and sends them through the socket
-        private async Task ProcessSend()
-        {
-            // Waits for a signal from the channel that data is ready to be read
-            while (_alive && await _sendChannel.Reader.WaitToReadAsync(_sendCancel.Token).ConfigureAwait(false))
-            {
-                // Once signaled, continuously read data while it is available
-                while (_sendChannel.Reader.TryRead(out var packet))
-                {
-                    // Header-only messages are optimized since we cache the HeaderBytes and don't need to rebuild them
-                    if (packet.Data == null)
-                    {
-                        int bytesSent = 0;
-                        try
-                        {
-                            while (bytesSent < AsyncTcp.HeaderSize)
-                            {
-                                bytesSent += await _socket
-                                    .SendAsync(new ArraySegment<byte>(AsyncTcp.HeaderBytes(packet.Type), bytesSent, AsyncTcp.HeaderSize - bytesSent), SocketFlags.None)
-                                    .ConfigureAwait(false);
-                            }
-                        }
-                        catch
-                        {
-                            ShutDown();
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        var useCompression = false;
-                        var bytes = AsyncTcp.Serializer.Serialize(packet.Data);
-
-                        if (AsyncTcp.UseCompression && bytes.Length >= AsyncTcp.CompressionCuttoff)
-                        {
-                            useCompression = true;
-                            bytes = await CompressWithGzipAsync(bytes).ConfigureAwait(false);
-                        }
-
-                        var size = AsyncTcp.HeaderSize + bytes.Length;
-                        var buffer = ArrayPool<byte>.Shared.Rent(size);
-                        // TODO there should be more efficient memory-methods of copying int and bool values to the array
-                        BitConverter.GetBytes(packet.Type).CopyTo(buffer, AsyncTcp.TypeOffset);
-                        BitConverter.GetBytes(bytes.Length).CopyTo(buffer, AsyncTcp.LengthOffset);
-                        BitConverter.GetBytes(useCompression).CopyTo(buffer, AsyncTcp.CompressedOffset);
-                        bytes.CopyTo(buffer, AsyncTcp.HeaderSize);
-
-                        int bytesSent = 0;
-                        try
-                        {
-                            while (bytesSent < size)
-                            {
-                                bytesSent += await _socket
-                                    .SendAsync(new ArraySegment<byte>(buffer, bytesSent, size - bytesSent), SocketFlags.None)
-                                    .ConfigureAwait(false);
-                            }
-                        }
-                        catch
-                        {
-                            ShutDown();
-                            return;
-                        }
-                        finally
-                        {
-                            ArrayPool<byte>.Shared.Return(buffer);
-                        }
-                    }
-
-                    // If the packet type is of ErrorType this indicates that we want to immediately Shutdown the peer
-                    // after the message is sent
-                    if (packet.Type == AsyncTcp.ErrorType)
-                    {
-                        ShutDown();
-                        return;
-                    }
-                }
-            }
+            catch { }
         }
 
         // Pipelines optimized method of Receiving socket bytes
@@ -194,14 +108,12 @@ namespace AsyncTcp
                     bytesRead = await _socket.ReceiveAsync(memory.GetArray(), SocketFlags.None).ConfigureAwait(false);
                     if (bytesRead == 0)
                     {
-                        ShutDown();
                         break;
                     }
                     writer.Advance(bytesRead);
                 }
                 catch
                 {
-                    ShutDown();
                     break;
                 }
 
@@ -224,27 +136,36 @@ namespace AsyncTcp
         {
             ReadResult result;
             ReadOnlySequence<byte> buffer;
+            object data;
+            var packet = new BytePacket();
 
             while (true)
             {
                 result = await reader.ReadAsync().ConfigureAwait(false);
                 buffer = result.Buffer;
 
-                while (TryParseBuffer(ref buffer, out Tuple<int, bool, byte[]> packet))
+                while (TryParseBuffer(ref buffer, ref packet))
                 {
-                    if (packet.Item1 == AsyncTcp.KeepAliveType)
-                        continue;
+                    data = null;
 
-                    // Channel can close at any time
-                    try
+                    if (packet.Length > 0)
                     {
-                        await _receiveChannel
-                            .Writer
-                            .WriteAsync(new BytePacket() { Type = packet.Item1, Compressed = packet.Item2, Bytes = packet.Item3 }, _receiveCancel.Token)
-                            .ConfigureAwait(false);
+                        try
+                        {
+                            if (packet.Compressed)
+                            {
+                                packet.Bytes = await DecompressWithGzipAsync(packet.Bytes).ConfigureAwait(false);
+                            }
+
+                            data = AsyncTcp.Serializer.Deserialize(packet.Type, packet.Bytes);
+                        }
+                        catch (Exception e)
+                        {
+                            await _handler.PacketReceived(this, -3, "2. PARSE EXCEPTION: " + e).ConfigureAwait(false);
+                        }
                     }
-                    catch
-                    { }
+
+                    try { await _handler.PacketReceived(this, packet.Type, data).ConfigureAwait(false); } catch { }
                 }
 
                 reader.AdvanceTo(buffer.Start, buffer.End);
@@ -261,65 +182,127 @@ namespace AsyncTcp
         // We use a type-length strategy of demarcating messages, this probably would be faster if we had
         // more optimized int/bool parsing from the slice and not 'BitConverter'
         // Another strategy is the Special character 'EOL' way of splitting messages
-        private bool TryParseBuffer(ref ReadOnlySequence<byte> buffer, out Tuple<int, bool, byte[]> packet)
+        private bool TryParseBuffer(ref ReadOnlySequence<byte> buffer, ref BytePacket packet)
         {
             if (buffer.Length < AsyncTcp.HeaderSize)
             {
-                packet = default;
                 return false;
             }
 
-            var type = BitConverter.ToInt32(buffer.Slice(AsyncTcp.TypeOffset, AsyncTcp.IntSize).ToArray(), AsyncTcp.ZeroOffset);
-            var length = BitConverter.ToInt32(buffer.Slice(AsyncTcp.LengthOffset, AsyncTcp.IntSize).ToArray(), AsyncTcp.ZeroOffset);
-            var compressed = BitConverter.ToBoolean(buffer.Slice(AsyncTcp.CompressedOffset, AsyncTcp.BoolSize).ToArray(), AsyncTcp.ZeroOffset);
+            packet.Type = BitConverter.ToInt32(buffer.Slice(AsyncTcp.TypeOffset, AsyncTcp.IntSize).ToArray(), AsyncTcp.ZeroOffset);
+            packet.Length = BitConverter.ToInt32(buffer.Slice(AsyncTcp.LengthOffset, AsyncTcp.IntSize).ToArray(), AsyncTcp.ZeroOffset);
+            packet.Compressed = BitConverter.ToBoolean(buffer.Slice(AsyncTcp.CompressedOffset, AsyncTcp.BoolSize).ToArray(), AsyncTcp.ZeroOffset);
+            packet.Bytes = null;
 
-            if (length == 0)
+            if (packet.Length == 0)
             {
-                packet = new Tuple<int, bool, byte[]>(type, compressed, null);
                 buffer = buffer.Slice(AsyncTcp.HeaderSize, buffer.End);
                 return true;
             }
 
-            var size = AsyncTcp.HeaderSize + length;
-
-            if (size > buffer.Length)
+            if (AsyncTcp.HeaderSize + packet.Length > buffer.Length)
             {
-                packet = default;
                 return false;
             }
 
-            packet = new Tuple<int, bool, byte[]>(type, compressed, buffer.Slice(AsyncTcp.HeaderSize, length).ToArray());
-            buffer = buffer.Slice(size);
+            packet.Bytes = buffer.Slice(AsyncTcp.HeaderSize, packet.Length).ToArray();
+            buffer = buffer.Slice(AsyncTcp.HeaderSize + packet.Length);
             return true;
         }
 
-        // Processes the ReceiveChannel Queue of messages and Sends them to the Handler's PacketReceived callback
-        private async Task ProcessPacket()
+        // Processes the SendChannel Queue of messages and sends them through the socket
+        private async Task ProcessSend()
         {
-            while (_alive && await _receiveChannel.Reader.WaitToReadAsync(_receiveCancel.Token).ConfigureAwait(false))
+            bool useCompression;
+            byte[] bytes;
+            int size;
+            byte[] buffer;
+            int bytesSent;
+
+            // Waits for a signal from the channel that data is ready to be read
+            while (_alive && await _sendChannel.Reader.WaitToReadAsync(_sendCancel.Token).ConfigureAwait(false))
             {
-                while (_receiveChannel.Reader.TryRead(out var packet))
+                // Once signaled, continuously read data while it is available
+                while (_sendChannel.Reader.TryRead(out var packet))
                 {
-                    var bytes = packet.Bytes;
-
-                    object data = null;
-
-                    if (bytes != null)
+                    // Header-only messages are optimized since we cache the HeaderBytes and don't need to rebuild them
+                    if (packet.Data == null)
                     {
                         try
                         {
-                            if (packet.Compressed)
+                            bytesSent = 0;
+                            while (bytesSent < AsyncTcp.HeaderSize)
                             {
-                                bytes = await DecompressWithGzipAsync(bytes).ConfigureAwait(false);
+                                bytesSent += await _socket
+                                    .SendAsync(new ArraySegment<byte>(AsyncTcp.HeaderBytes(packet.Type), bytesSent, AsyncTcp.HeaderSize - bytesSent), SocketFlags.None)
+                                    .ConfigureAwait(false);
                             }
-
-                            data = AsyncTcp.Serializer.Deserialize(packet.Type, bytes);
                         }
                         catch { }
                     }
+                    else
+                    {
+                        useCompression = false;
+                        bytes = AsyncTcp.Serializer.Serialize(packet.Data);
 
-                    try { await _handler.PacketReceived(this, packet.Type, data).ConfigureAwait(false); } catch { }
+                        if (AsyncTcp.UseCompression && bytes.Length >= AsyncTcp.CompressionCuttoff)
+                        {
+                            useCompression = true;
+                            bytes = await CompressWithGzipAsync(bytes).ConfigureAwait(false);
+                        }
+
+                        size = AsyncTcp.HeaderSize + bytes.Length;
+                        buffer = ArrayPool<byte>.Shared.Rent(size);
+
+                        // TODO there should be more efficient memory-methods of copying int and bool values to the array
+                        BitConverter.GetBytes(packet.Type).CopyTo(buffer, AsyncTcp.TypeOffset);
+                        BitConverter.GetBytes(bytes.Length).CopyTo(buffer, AsyncTcp.LengthOffset);
+                        BitConverter.GetBytes(useCompression).CopyTo(buffer, AsyncTcp.CompressedOffset);
+                        bytes.CopyTo(buffer, AsyncTcp.HeaderSize);
+
+                        bytesSent = 0;
+                        try
+                        {
+                            while (bytesSent < size)
+                            {
+                                bytesSent += await _socket
+                                    .SendAsync(new ArraySegment<byte>(buffer, bytesSent, size - bytesSent), SocketFlags.None)
+                                    .ConfigureAwait(false);
+                            }
+                        }
+                        catch { }
+                        finally
+                        {
+                            ArrayPool<byte>.Shared.Return(buffer);
+                        }
+                    }
+
+                    // If the packet type is of ErrorType call Shutdown and let the peer gracefully finish processing
+                    if (packet.Type == AsyncTcp.ErrorType)
+                    {
+                        ShutDown();
+                    }
                 }
+            }
+        }
+
+        private async Task KeepAlive()
+        {
+            var count = AsyncTcp.KeepAliveInterval;
+
+            while (_alive)
+            {
+                if (count == AsyncTcp.KeepAliveInterval)
+                {
+                    count = 0;
+                    await Send(AsyncTcp.KeepAliveType).ConfigureAwait(false);
+                }
+                else
+                {
+                    count++;
+                }
+
+                await Task.Delay(AsyncTcp.KeepAliveDelay).ConfigureAwait(false);
             }
         }
     }

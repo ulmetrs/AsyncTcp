@@ -8,20 +8,16 @@ namespace AsyncTcp
     public class AsyncClient
     {
         private readonly IAsyncHandler _handler;
-        private readonly int _keepAliveInterval;
 
         private AsyncPeer _peer;
         private bool _alive;
 
-        public AsyncClient(
-            IAsyncHandler handler,
-            int keepAliveInterval = AsyncTcp.KeepAliveInterval)
+        public AsyncClient(IAsyncHandler handler)
         {
             if (!AsyncTcp.IsInitialized)
                 throw new Exception("AsyncTcp must be initialized before creating a client");
 
             _handler = handler ?? throw new Exception("Handler cannot be null");
-            _keepAliveInterval = keepAliveInterval;
         }
 
         public async Task Start(IPAddress address, int bindPort = 9050)
@@ -30,33 +26,19 @@ namespace AsyncTcp
                 throw new Exception("Cannot start client while alive");
 
             var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-            await socket
-                .ConnectAsync(new IPEndPoint(address, bindPort))
-                .ConfigureAwait(false);
-
-            _peer = new AsyncPeer(socket, _handler);
+            await socket.ConnectAsync(new IPEndPoint(address, bindPort)).ConfigureAwait(false);
 
             _alive = true;
 
-            var keepAlive = Task.Run(KeepAlive);
+            _peer = new AsyncPeer(socket, _handler);
 
             try
             {
-                await _peer
-                    .Process()
-                    .ConfigureAwait(false);
+                await _peer.Process().ConfigureAwait(false);
             }
-            catch
-            {
-                ShutDown();
-                await keepAlive
-                    .ConfigureAwait(false);
-                throw;
-            }
+            catch { }
 
             ShutDown();
-            await keepAlive
-                .ConfigureAwait(false);
         }
 
         public Task Send(int type, object data = null)
@@ -74,27 +56,6 @@ namespace AsyncTcp
             _alive = false;
 
             _peer.ShutDown();
-        }
-
-        private async Task KeepAlive()
-        {
-            var count = _keepAliveInterval;
-
-            while (_alive)
-            {
-                await Task.Delay(AsyncTcp.KeepAliveDelay).ConfigureAwait(false);
-
-                if (count == _keepAliveInterval)
-                {
-                    count = 0;
-
-                    await _peer.Send(AsyncTcp.KeepAliveType).ConfigureAwait(false);
-                }
-                else
-                {
-                    count++;
-                }
-            }
         }
     }
 }
