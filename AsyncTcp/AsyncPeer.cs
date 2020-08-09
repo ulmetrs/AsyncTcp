@@ -20,7 +20,8 @@ namespace AsyncTcp
         private readonly Channel<ObjectPacket> _sendChannel;
         private readonly CancellationTokenSource _sendCancel;
 
-        private bool _alive;
+        private bool _alive = false;
+        private int _keepAliveCount = 0;
 
         // Peers are constructed from connected sockets
         internal AsyncPeer(
@@ -43,15 +44,16 @@ namespace AsyncTcp
             var pipe = new Pipe();
 
             // Start the 4 Running Processing Steps for a Peer
-            var receiveTask = Task.Run(() => ReceiveFromSocket(pipe.Writer));
-            var parseTask = Task.Run(() => ParseBytes(pipe.Reader));
-            var sendTask = Task.Run(() => ProcessSend());
-            var keepAliveTask = Task.Run(() => KeepAlive());
+            var receiveTask = ReceiveFromSocket(pipe.Writer);
+            var parseTask = ParseBytes(pipe.Reader);
+            var sendTask = ProcessSend();
+            var keepAliveTask = KeepAlive();
 
             await _handler.PeerConnected(this).ConfigureAwait(false);
 
             // Wait for sockets to close and parsing to finish
-            await Task.WhenAll(receiveTask, parseTask).ConfigureAwait(false);
+            await receiveTask.ConfigureAwait(false);
+            await parseTask.ConfigureAwait(false);
 
             // This prevents us from re-entering the 'WaitToReadAsync' loop after a shutdown call, but
             // does not break us out.  Its possible to re-enter the 'WaitToReadAsync' AFTER the
@@ -65,12 +67,13 @@ namespace AsyncTcp
             _sendCancel.Cancel();
 
             // Wait for the remaining tasks to finish
-            await Task.WhenAll(sendTask, keepAliveTask).ConfigureAwait(false);
+            await sendTask.ConfigureAwait(false);
+            await keepAliveTask.ConfigureAwait(false);
 
             await _handler.PeerDisconnected(this).ConfigureAwait(false);
         }
 
-        // Shutdown processing at any point via error, via error message, or manually
+        // Shutdown called manually or via send error
         public void ShutDown()
         {
             // Idiosynchrosies for socket class throw exceptions in various scenarios,
@@ -106,6 +109,7 @@ namespace AsyncTcp
                 try
                 {
                     bytesRead = await _socket.ReceiveAsync(memory.GetArray(), SocketFlags.None).ConfigureAwait(false);
+                    Interlocked.Exchange(ref _keepAliveCount, 0);
                     if (bytesRead == 0)
                     {
                         break;
@@ -159,10 +163,7 @@ namespace AsyncTcp
 
                             data = AsyncTcp.Serializer.Deserialize(packet.Type, packet.Bytes);
                         }
-                        catch (Exception e)
-                        {
-                            await _handler.PacketReceived(this, -3, "2. PARSE EXCEPTION: " + e).ConfigureAwait(false);
-                        }
+                        catch { }
                     }
 
                     try { await _handler.PacketReceived(this, packet.Type, data).ConfigureAwait(false); } catch { }
@@ -223,7 +224,7 @@ namespace AsyncTcp
             while (_alive && await _sendChannel.Reader.WaitToReadAsync(_sendCancel.Token).ConfigureAwait(false))
             {
                 // Once signaled, continuously read data while it is available
-                while (_sendChannel.Reader.TryRead(out var packet))
+                while (_alive && _sendChannel.Reader.TryRead(out var packet))
                 {
                     // Header-only messages are optimized since we cache the HeaderBytes and don't need to rebuild them
                     if (packet.Data == null)
@@ -238,7 +239,8 @@ namespace AsyncTcp
                                     .ConfigureAwait(false);
                             }
                         }
-                        catch { }
+                        catch
+                        { }
                     }
                     else
                     {
@@ -270,7 +272,8 @@ namespace AsyncTcp
                                     .ConfigureAwait(false);
                             }
                         }
-                        catch { }
+                        catch
+                        { }
                         finally
                         {
                             ArrayPool<byte>.Shared.Return(buffer);
@@ -290,11 +293,23 @@ namespace AsyncTcp
         {
             var count = AsyncTcp.KeepAliveInterval;
 
+            await Task.Delay(AsyncTcp.KeepAliveDelay).ConfigureAwait(false);
+
             while (_alive)
             {
                 if (count == AsyncTcp.KeepAliveInterval)
                 {
                     count = 0;
+
+                    Interlocked.Increment(ref _keepAliveCount);
+
+                    // If we have counted at least 3 keepAlives and we havn't received any assume the connection is closed
+                    if (_alive && _keepAliveCount >= 3)
+                    {
+                        ShutDown();
+                        break;
+                    }
+
                     await Send(AsyncTcp.KeepAliveType).ConfigureAwait(false);
                 }
                 else

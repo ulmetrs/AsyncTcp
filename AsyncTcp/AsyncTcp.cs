@@ -18,7 +18,6 @@ namespace AsyncTcp
         internal const int MinReceiveBufferSize = 512;
         internal const int KeepAliveDelay = 1000;
         internal const int KeepAliveInterval = 10;
-        internal const int TaskCleanupInterval = 100;
 
         internal static ISerializer Serializer;
         internal static int KeepAliveType;

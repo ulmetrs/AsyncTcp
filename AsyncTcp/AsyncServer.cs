@@ -50,7 +50,7 @@ namespace AsyncTcp
                     socket = await _listener.AcceptAsync().ConfigureAwait(false);
                     socket.NoDelay = true;
                     // Process the socket
-                    _ = Task.Run(() => ProcessSocket(socket));
+                    _ = ProcessSocket(socket);
                 }
             }
             catch { }
