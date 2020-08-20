@@ -1,6 +1,6 @@
 ﻿namespace AsyncTcp
 {
-    public interface ISerializer
+    public interface IByteSerializer
     {
         byte[] Serialize(object obj);
         object Deserialize(int type, byte[] bytes);

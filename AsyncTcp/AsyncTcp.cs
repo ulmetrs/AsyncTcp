@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.IO;
+using System;
 using System.Collections.Generic;
 
 namespace AsyncTcp
@@ -19,23 +20,28 @@ namespace AsyncTcp
         internal const int KeepAliveDelay = 1000;
         internal const int KeepAliveInterval = 10;
 
-        internal static ISerializer Serializer;
+        internal static IStreamSerializer StreamSerializer;
+        internal static IByteSerializer ByteSerializer;
         internal static int KeepAliveType;
         internal static int ErrorType;
         internal static bool UseCompression;
 
         internal static bool IsInitialized;
-        
+
+        // TODO optimize the stream manager by providing constructor overrides
+        internal static readonly RecyclableMemoryStreamManager StreamManager = new RecyclableMemoryStreamManager();
         private static IDictionary<int, byte[]> _headerBytes;
 
         // Throw Exception on Client and Server if we try to create with initializing
         public static void Initialize(
-            ISerializer serializer,
+            IStreamSerializer streamSerializer,
+            IByteSerializer byteSerializer,
             int keepAliveType = -1,
             int errorType = -2,
             bool useCompression = true)
         {
-            Serializer = serializer;
+            StreamSerializer = streamSerializer;
+            ByteSerializer = byteSerializer;
             KeepAliveType = keepAliveType;
             ErrorType = errorType;
             UseCompression = useCompression;

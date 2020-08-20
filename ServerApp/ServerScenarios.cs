@@ -6,11 +6,11 @@ using System.Threading.Tasks;
 
 namespace ServerApp
 {
-    public class ServerScenarios : ISerializer, IAsyncHandler
+    public class ServerScenarios : IByteSerializer, IAsyncHandler
     {
         public ServerScenarios()
         {
-            AsyncTcp.AsyncTcp.Initialize(this);
+            AsyncTcp.AsyncTcp.Initialize(null, this);
         }
 
         public async Task RunServer()

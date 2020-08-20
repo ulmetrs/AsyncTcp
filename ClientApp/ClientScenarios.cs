@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace ClientApp
 {
-    public class ClientScenarios : IAsyncHandler, ISerializer
+    public class ClientScenarios : IAsyncHandler, IByteSerializer
     {
         private IPAddress _address;
         private XorShift _xorShifter;
@@ -15,7 +15,7 @@ namespace ClientApp
 
         public ClientScenarios(IPAddress address)
         {
-            AsyncTcp.AsyncTcp.Initialize(this);
+            AsyncTcp.AsyncTcp.Initialize(null, this);
             _address = address;
             _xorShifter = new XorShift(true);
             _random = new Random();
