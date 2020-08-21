@@ -1,6 +1,7 @@
 ﻿using Microsoft.IO;
 using System;
 using System.Collections.Generic;
+using System.IO.Pipelines;
 
 namespace AsyncTcp
 {
@@ -20,35 +21,22 @@ namespace AsyncTcp
         internal const int KeepAliveDelay = 1000;
         internal const int KeepAliveInterval = 10;
 
-        internal static IStreamSerializer StreamSerializer;
-        internal static IByteSerializer ByteSerializer;
-        internal static int KeepAliveType;
-        internal static int ErrorType;
-        internal static bool UseCompression;
-
-        internal static bool IsInitialized;
-
-        // TODO optimize the stream manager by providing constructor overrides
         internal static readonly RecyclableMemoryStreamManager StreamManager = new RecyclableMemoryStreamManager();
+        internal static AsyncTcpConfig Config;
+        internal static bool IsInitialized;
         private static IDictionary<int, byte[]> _headerBytes;
 
         // Throw Exception on Client and Server if we try to create with initializing
-        public static void Initialize(
-            IStreamSerializer streamSerializer,
-            IByteSerializer byteSerializer,
-            int keepAliveType = -1,
-            int errorType = -2,
-            bool useCompression = true)
+        public static void Initialize(AsyncTcpConfig config)
         {
-            StreamSerializer = streamSerializer;
-            ByteSerializer = byteSerializer;
-            KeepAliveType = keepAliveType;
-            ErrorType = errorType;
-            UseCompression = useCompression;
+            if (config.StreamSerializer == null && config.ByteSerializer == null)
+                throw new Exception("Must supply either a stream or byte serializer");
+
+            Config = config;
 
             _headerBytes = new Dictionary<int, byte[]>();
-            HeaderBytes(KeepAliveType);
-            HeaderBytes(ErrorType);
+            HeaderBytes(Config.KeepAliveType);
+            HeaderBytes(Config.ErrorType);
 
             IsInitialized = true;
         }
@@ -64,5 +52,17 @@ namespace AsyncTcp
             BitConverter.GetBytes(type).CopyTo(_headerBytes[type], ZeroOffset);
             return _headerBytes[type];
         }
+    }
+
+    public class AsyncTcpConfig
+    {
+        public IStreamSerializer StreamSerializer { get; set; }
+        public IByteSerializer ByteSerializer { get; set; }
+        public int KeepAliveType { get; set; } = -1;
+        public int ErrorType { get; set; } = -2;
+        public bool UseCompression { get; set; } = true;
+        // There are many pipe options we can play with
+        //var options = new PipeOptions(pauseWriterThreshold: 10, resumeWriterThreshold: 5);
+        public PipeOptions PipeOptions { get; set; }
     }
 }

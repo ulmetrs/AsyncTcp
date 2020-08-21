@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace ClientApp
 {
-    public class ClientScenarios : IAsyncHandler, IByteSerializer
+    public class ClientScenarios : IAsyncHandler
     {
         private IPAddress _address;
         private XorShift _xorShifter;
@@ -15,10 +15,33 @@ namespace ClientApp
 
         public ClientScenarios(IPAddress address)
         {
-            AsyncTcp.AsyncTcp.Initialize(null, this);
+            var config = new AsyncTcpConfig()
+            {
+                ByteSerializer = new ByteSerializer()
+            };
+
+            AsyncTcp.AsyncTcp.Initialize(config);
+
             _address = address;
             _xorShifter = new XorShift(true);
             _random = new Random();
+        }
+
+        private class ByteSerializer : IByteSerializer
+        {
+            public byte[] Serialize(object obj)
+            {
+                return Utf8Json.JsonSerializer.Serialize(obj);
+            }
+
+            public object Deserialize(int type, byte[] bytes)
+            {
+                if (type == 1)
+                {
+                    return Utf8Json.JsonSerializer.Deserialize<TestMessage>(bytes);
+                }
+                return null;
+            }
         }
 
         public async Task RunKeepAliveScenarioAsync(int clientCount)
@@ -116,20 +139,6 @@ namespace ClientApp
 
                 await Console.Out.WriteLineAsync($"Client (PeerId: {peer.PeerId}) Received Message: {message.index}").ConfigureAwait(false);
             }
-        }
-
-        public byte[] Serialize(object obj)
-        {
-            return Utf8Json.JsonSerializer.Serialize(obj);
-        }
-
-        public object Deserialize(int type, byte[] bytes)
-        {
-            if (type == 1)
-            {
-                return Utf8Json.JsonSerializer.Deserialize<TestMessage>(bytes);
-            }
-            return null;
         }
     }
 }

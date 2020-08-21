@@ -4,7 +4,7 @@ namespace AsyncTcp
 {
     public interface IStreamSerializer
     {
-        void Serialize(object obj, Stream stream);
-        object Deserialize(int type, Stream stream);
+        void Serialize(Stream outputStream, object val);
+        object Deserialize(int type, Stream inputStream);
     }
 }

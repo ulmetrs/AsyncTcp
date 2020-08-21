@@ -99,7 +99,7 @@ namespace AsyncTcp
         {
             if (_peers.TryRemove(peerId, out AsyncPeer peer))
             {
-                await peer.Send(AsyncTcp.ErrorType, data).ConfigureAwait(false);
+                await peer.Send(AsyncTcp.Config.ErrorType, data).ConfigureAwait(false);
             }
         }
     }

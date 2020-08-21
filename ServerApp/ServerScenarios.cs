@@ -6,11 +6,33 @@ using System.Threading.Tasks;
 
 namespace ServerApp
 {
-    public class ServerScenarios : IByteSerializer, IAsyncHandler
+    public class ServerScenarios : IAsyncHandler
     {
         public ServerScenarios()
         {
-            AsyncTcp.AsyncTcp.Initialize(null, this);
+            var config = new AsyncTcpConfig()
+            {
+                ByteSerializer = new ByteSerializer()
+            };
+
+            AsyncTcp.AsyncTcp.Initialize(config);
+        }
+
+        private class ByteSerializer : IByteSerializer
+        {
+            public byte[] Serialize(object obj)
+            {
+                return Utf8Json.JsonSerializer.Serialize(obj);
+            }
+
+            public object Deserialize(int type, byte[] bytes)
+            {
+                if (type == 1)
+                {
+                    return Utf8Json.JsonSerializer.Deserialize<TestMessage>(bytes);
+                }
+                return null;
+            }
         }
 
         public async Task RunServer()
@@ -30,20 +52,6 @@ namespace ServerApp
         {
             await Task.Delay(10000).ConfigureAwait(false);
             server.ShutDown();
-        }
-
-        public byte[] Serialize(object obj)
-        {
-            return Utf8Json.JsonSerializer.Serialize(obj);
-        }
-
-        public object Deserialize(int type, byte[] bytes)
-        {
-            if (type == 1)
-            {
-                return Utf8Json.JsonSerializer.Deserialize<TestMessage>(bytes);
-            }
-            return null;
         }
 
         public async Task PeerConnected(AsyncPeer peer)
