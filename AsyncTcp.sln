@@ -9,7 +9,9 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ClientApp", "ClientApp\Clie
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ServerApp", "ServerApp\ServerApp.csproj", "{1999BF34-68E2-4D7E-802C-24B6EBDAE15A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncTest", "AsyncTest\AsyncTest.csproj", "{893E5004-A3E6-4FFE-B1D0-BB0E244E2CFA}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AsyncTest", "AsyncTest\AsyncTest.csproj", "{893E5004-A3E6-4FFE-B1D0-BB0E244E2CFA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AsyncTcpBytes", "AsyncTcpBytes\AsyncTcpBytes.csproj", "{D05C06C9-A26F-44D0-B131-18DE6CB3D8A0}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -33,6 +35,10 @@ Global
 		{893E5004-A3E6-4FFE-B1D0-BB0E244E2CFA}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{893E5004-A3E6-4FFE-B1D0-BB0E244E2CFA}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{893E5004-A3E6-4FFE-B1D0-BB0E244E2CFA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D05C06C9-A26F-44D0-B131-18DE6CB3D8A0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D05C06C9-A26F-44D0-B131-18DE6CB3D8A0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D05C06C9-A26F-44D0-B131-18DE6CB3D8A0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D05C06C9-A26F-44D0-B131-18DE6CB3D8A0}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

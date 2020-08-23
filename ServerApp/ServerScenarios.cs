@@ -35,6 +35,28 @@ namespace ServerApp
             }
         }
 
+        public async Task PeerConnected(AsyncPeer peer)
+        {
+            await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) connected...").ConfigureAwait(false);
+        }
+
+        public async Task PeerDisconnected(AsyncPeer peer)
+        {
+            await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) disconnected...").ConfigureAwait(false);
+        }
+
+        public async Task MessageReceived(AsyncPeer peer, int type, object packet)
+        {
+            if (type == 1)
+            {
+                var message = (TestMessage)packet;
+
+                await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) Received Message: {message.index}").ConfigureAwait(false);
+
+                await peer.Send(type, message);
+            }
+        }
+
         public async Task RunServer()
         {
             var server = new AsyncServer(this);
@@ -52,28 +74,6 @@ namespace ServerApp
         {
             await Task.Delay(10000).ConfigureAwait(false);
             server.ShutDown();
-        }
-
-        public async Task PeerConnected(AsyncPeer peer)
-        {
-            await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) connected...").ConfigureAwait(false);
-        }
-
-        public async Task PeerDisconnected(AsyncPeer peer)
-        {
-            await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) disconnected...").ConfigureAwait(false);
-        }
-
-        public async Task PacketReceived(AsyncPeer peer, int type, object packet)
-        {
-            if (type == 1)
-            {
-                var message = (TestMessage)packet;
-
-                await Console.Out.WriteLineAsync($"Server (PeerId: {peer.PeerId}) Received Message: {message.index}").ConfigureAwait(false);
-
-                await peer.Send(type, message);
-            }
         }
     }
 }

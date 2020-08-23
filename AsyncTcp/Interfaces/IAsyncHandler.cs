@@ -6,6 +6,6 @@ namespace AsyncTcp
     {
         Task PeerConnected(AsyncPeer peer);
         Task PeerDisconnected(AsyncPeer peer);
-        Task PacketReceived(AsyncPeer peer, int type, object packet);
+        Task MessageReceived(AsyncPeer peer, int type, object message);
     }
 }

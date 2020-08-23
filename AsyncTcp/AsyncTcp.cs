@@ -7,15 +7,6 @@ namespace AsyncTcp
 {
     public static class AsyncTcp
     {
-        internal const int BoolSize = 1;
-        internal const int IntSize = 4;
-
-        internal const int ZeroOffset = 0;
-        internal const int TypeOffset = 0;
-        internal const int LengthOffset = 4;
-        internal const int CompressedOffset = 8;
-        internal const int HeaderSize = 9;
-
         internal const int CompressionCuttoff = 860; // 1000, 1500 ???
         internal const int MinReceiveBufferSize = 512;
         internal const int KeepAliveDelay = 1000;
@@ -25,6 +16,7 @@ namespace AsyncTcp
         internal static AsyncTcpConfig Config;
         internal static bool IsInitialized;
         private static IDictionary<int, byte[]> _headerBytes;
+        private static IDictionary<int, ObjectMessage> _headerMessages;
 
         // Throw Exception on Client and Server if we try to create with initializing
         public static void Initialize(AsyncTcpConfig config)
@@ -35,6 +27,7 @@ namespace AsyncTcp
             Config = config;
 
             _headerBytes = new Dictionary<int, byte[]>();
+            _headerMessages = new Dictionary<int, ObjectMessage>();
             HeaderBytes(Config.KeepAliveType);
             HeaderBytes(Config.ErrorType);
 
@@ -48,9 +41,20 @@ namespace AsyncTcp
             {
                 return bytes;
             }
-            _headerBytes[type] = new byte[HeaderSize];
-            BitConverter.GetBytes(type).CopyTo(_headerBytes[type], ZeroOffset);
+            _headerBytes[type] = new byte[9];
+            BitConverter.GetBytes(type).CopyTo(_headerBytes[type], 0);
             return _headerBytes[type];
+        }
+
+        // Lazy Memoize our Zero Length Header Messages
+        public static ObjectMessage HeaderMessages(int type)
+        {
+            if (_headerMessages.TryGetValue(type, out var data))
+            {
+                return data;
+            }
+            _headerMessages[type] = new ObjectMessage() { Type = type };
+            return _headerMessages[type];
         }
     }
 

@@ -44,6 +44,26 @@ namespace ClientApp
             }
         }
 
+        public async Task PeerConnected(AsyncPeer peer)
+        {
+            await Console.Out.WriteLineAsync($"Client (PeerId: {peer.PeerId}) connected...").ConfigureAwait(false);
+        }
+
+        public async Task PeerDisconnected(AsyncPeer peer)
+        {
+            await Console.Out.WriteLineAsync($"Client (PeerId: {peer.PeerId}) disconnected...").ConfigureAwait(false);
+        }
+
+        public async Task MessageReceived(AsyncPeer peer, int type, object packet)
+        {
+            if (type == 1)
+            {
+                var message = (TestMessage)packet;
+
+                await Console.Out.WriteLineAsync($"Client (PeerId: {peer.PeerId}) Received Message: {message.index}").ConfigureAwait(false);
+            }
+        }
+
         public async Task RunKeepAliveScenarioAsync(int clientCount)
         {
             await Console.Out.WriteLineAsync($"Client creation count is {clientCount}.").ConfigureAwait(false);
@@ -116,28 +136,8 @@ namespace ClientApp
                     index = i,
                     data = _xorShifter.GetRandomBytes(5000),
                 };
-                await client.Send(1, letter).ConfigureAwait(false);
+                await client.Peer.Send(1, letter).ConfigureAwait(false);
                 await Task.Delay(_random.Next(1, 3) * 1000);
-            }
-        }
-
-        public async Task PeerConnected(AsyncPeer peer)
-        {
-            await Console.Out.WriteLineAsync($"Client (PeerId: {peer.PeerId}) connected...").ConfigureAwait(false);
-        }
-
-        public async Task PeerDisconnected(AsyncPeer peer)
-        {
-            await Console.Out.WriteLineAsync($"Client (PeerId: {peer.PeerId}) disconnected...").ConfigureAwait(false);
-        }
-
-        public async Task PacketReceived(AsyncPeer peer, int type, object packet)
-        {
-            if (type == 1)
-            {
-                var message = (TestMessage)packet;
-
-                await Console.Out.WriteLineAsync($"Client (PeerId: {peer.PeerId}) Received Message: {message.index}").ConfigureAwait(false);
             }
         }
     }
