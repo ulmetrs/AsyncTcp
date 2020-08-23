@@ -19,7 +19,7 @@ namespace AsyncTcpBytes
         private static IDictionary<int, byte[]> _headerBytes;
         private static IDictionary<int, IMessage> _headerMessages;
 
-        internal static bool IsInitialized;
+        internal static bool IsConfigured;
 
         // Throw Exception on Client and Server if we try to create with initializing
         public static void Configure(Config config)
@@ -38,7 +38,7 @@ namespace AsyncTcpBytes
             _headerBytes = new Dictionary<int, byte[]>();
             _headerMessages = new Dictionary<int, IMessage>();
 
-            IsInitialized = true;
+            IsConfigured = true;
         }
 
         // Lazy Memoize our Zero Size Header Bytes for Sending
