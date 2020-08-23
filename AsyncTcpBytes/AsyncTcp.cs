@@ -9,7 +9,6 @@ namespace AsyncTcpBytes
         internal const int KeepAliveDelay = 1000;
 
         internal static IPeerHandler PeerHandler;
-        internal static IDictionary<int, Type> MessageTypes; // If unknown types are received we have a critical error and shutdown the peer
         internal static IMessagePoolManager MessagePoolManager; // Supply Message Pool Implementation, will Return Objects on Sends and Get Objects for Receives if supplied
         internal static int KeepAliveType;
         internal static int ErrorType;
