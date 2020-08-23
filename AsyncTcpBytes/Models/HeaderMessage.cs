@@ -26,5 +26,10 @@ namespace AsyncTcpBytes
         {
             return Task.CompletedTask;
         }
+
+        public bool ManualReturn()
+        {
+            return false;
+        }
     }
 }
