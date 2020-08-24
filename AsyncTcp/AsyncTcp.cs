@@ -7,14 +7,15 @@ namespace AsyncTcp
 {
     public static class AsyncTcp
     {
+        public static readonly RecyclableMemoryStreamManager StreamManager = new RecyclableMemoryStreamManager();
+
         internal const int CompressionCuttoff = 860; // 1000, 1500 ???
         internal const int MinReceiveBufferSize = 512;
         internal const int KeepAliveDelay = 1000;
         internal const int KeepAliveInterval = 10;
-
-        internal static readonly RecyclableMemoryStreamManager StreamManager = new RecyclableMemoryStreamManager();
         internal static AsyncTcpConfig Config;
         internal static bool IsInitialized;
+
         private static IDictionary<int, byte[]> _headerBytes;
         private static IDictionary<int, ObjectMessage> _headerMessages;
 

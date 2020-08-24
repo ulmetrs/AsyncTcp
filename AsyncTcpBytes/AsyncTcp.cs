@@ -7,10 +7,9 @@ namespace AsyncTcpBytes
 {
     public static class AsyncTcp
     {
+        public static readonly RecyclableMemoryStreamManager StreamManager = new RecyclableMemoryStreamManager();
+
         internal const int KeepAliveDelay = 1000;
-
-        internal static readonly RecyclableMemoryStreamManager StreamManager = new RecyclableMemoryStreamManager();
-
         internal static IPeerHandler PeerHandler;
         internal static int KeepAliveType;
         internal static int ErrorType;
