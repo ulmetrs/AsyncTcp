@@ -17,7 +17,7 @@ namespace AsyncTcpBytes
 
         private readonly Socket _socket;
         private readonly Pipe _receivePipe;
-        private Channel<IMessage> _sendChannel;
+        private Channel<Message> _sendChannel;
         private CancellationTokenSource _sendCancel;
 
         private bool _alive;
@@ -29,7 +29,7 @@ namespace AsyncTcpBytes
         {
             _socket = socket;
             _receivePipe = new Pipe(AsyncTcp.ReceivePipeOptions);
-            _sendChannel = Channel.CreateUnbounded<IMessage>(new UnboundedChannelOptions() { SingleReader = true });
+            _sendChannel = Channel.CreateUnbounded<Message>(new UnboundedChannelOptions() { SingleReader = true });
             _sendCancel = new CancellationTokenSource();
         }
 
@@ -141,27 +141,28 @@ namespace AsyncTcpBytes
                     {
                         try
                         {
-                            await AsyncTcp.PeerHandler.MessageReceived(this, AsyncTcp.HeaderMessage(info.Type)).ConfigureAwait(false);
+                            await AsyncTcp.PeerHandler.UnpackMessage(this, info.Type, null).ConfigureAwait(false);
                         }
                         catch { }
 
                         continue;
                     }
 
-                    try
+                    using (var stream = AsyncTcp.StreamManager.GetStream(null, info.Size))
                     {
-                        var message = AsyncTcp.MessagePoolManager.Get(info.Type);
-                        var messageBuffer = info.Buffer;
-                        await message.Unpack(ref messageBuffer).ConfigureAwait(false);
+                        foreach (var segment in info.Buffer)
+                        {
+#if NETCOREAPP3_1
+                            await stream.WriteAsync(segment).ConfigureAwait(false);
+#else
+                            var array = segment.GetArray();
+                            await stream.WriteAsync(array.Array, array.Offset, array.Count).ConfigureAwait(false);
+#endif
+                        }
 
-                        await AsyncTcp.PeerHandler.MessageReceived(this, message).ConfigureAwait(false);
+                        stream.Position = 0;
 
-                        if (!message.ManualReturn())
-                            AsyncTcp.MessagePoolManager.Return(message);
-                    }
-                    catch
-                    {
-                        ShutDown();
+                        await AsyncTcp.PeerHandler.UnpackMessage(this, info.Type, stream).ConfigureAwait(false);
                     }
                 }
 
@@ -230,9 +231,25 @@ namespace AsyncTcpBytes
             return true;
         }
 
-        // We funnel messages into a channel so that they can be sent async (including the managed keep-alives)
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public async Task Send(IMessage message)
+        public async Task Send(int type)
+        {
+            try
+            {
+                await _sendChannel
+                   .Writer
+                   .WriteAsync(AsyncTcp.HeaderMessage(type), _sendCancel.Token)
+                   .ConfigureAwait(false);
+            }
+            catch { }
+        }
+
+        // Messages are assumed to be rented from the Message Pool Manager
+        // If ManualReturn() resolves to false (default) the message will be returned to the pool
+        // Ensure IMessage AND MemoryPoolManager are implemented correctly, there are no
+        // Guard rails here
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public async Task Send(Message message)
         {
             try
             {
@@ -258,11 +275,12 @@ namespace AsyncTcpBytes
             }
         }
 
+        private byte[] header = new byte[8];
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public async Task ProcessSend(IMessage message)
+        public async Task ProcessSend(Message message)
         {
-            // Zero-size messages are cached for performance, since the 8-byte regions only contain type, 0 length
-            if (message.GetPackedSize() == 0)
+            if (message.HeaderOnly)
             {
                 try
                 {
@@ -270,7 +288,7 @@ namespace AsyncTcpBytes
                     while (bytesSent < 8)
                     {
                         bytesSent += await _socket
-                            .SendAsync(new ArraySegment<byte>(AsyncTcp.HeaderBytes(message.GetMessageType()), bytesSent, 8 - bytesSent), SocketFlags.None)
+                            .SendAsync(new ArraySegment<byte>(AsyncTcp.HeaderBytes(message.MessageType), bytesSent, 8 - bytesSent), SocketFlags.None)
                             .ConfigureAwait(false);
                     }
                 }
@@ -279,37 +297,43 @@ namespace AsyncTcpBytes
                 return;
             }
 
-            int type = message.GetMessageType();
-            int size = message.GetPackedSize();
-            int length = 8 + size;
-
-            // I chose to make this non-configurable, the byte array pool is pretty well-optimized and its easier to support the older socket APIs
-            var buffer = ArrayPool<byte>.Shared.Rent(length);
-
-            // Write the header
-            WriteInt(buffer, 0, type);
-            WriteInt(buffer, 4, size);
-            // Write the data
-            await message.Pack(buffer, 8).ConfigureAwait(false);
-
-            try
+            using (var stream = AsyncTcp.StreamManager.GetStream())
             {
-                int bytesSent = 0;
-                while (bytesSent < size)
-                {
+                // Skip the header and pack the stream
+                stream.Position = 8;
 
-                    bytesSent += await _socket
-                        .SendAsync(new ArraySegment<byte>(buffer, 8 + bytesSent, size - bytesSent), SocketFlags.None)
-                        .ConfigureAwait(false);
+                await AsyncTcp.PeerHandler.PackMessage(this, message, stream).ConfigureAwait(false);
+
+                // Go back and write the header now that we know the size
+                stream.Position = 0;
+                WriteInt(header, 0, message.MessageType);
+                WriteInt(header, 4, (int)stream.Length - 8);
+                stream.Write(header, 0, 8);
+
+                stream.Position = 0;
+                if (stream.TryGetBuffer(out var buffer))
+                {
+                    try
+                    {
+                        int bytesSent = 0;
+                        while (bytesSent < buffer.Count)
+                        {
+                            bytesSent += await _socket
+                                .SendAsync(new ArraySegment<byte>(buffer.Array, buffer.Offset + bytesSent, buffer.Count - bytesSent), SocketFlags.None)
+                                .ConfigureAwait(false);
+                        }
+                    }
+                    catch { }
                 }
             }
-            catch { }
 
             // If the packet type is of ErrorType call Shutdown and let the peer gracefully finish processing
-            if (message.GetMessageType() == AsyncTcp.ErrorType)
+            if (message.MessageType == AsyncTcp.ErrorType)
             {
                 ShutDown();
             }
+
+            await AsyncTcp.PeerHandler.DisposeMessage(this, message);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -87,7 +87,7 @@ namespace AsyncTcpBytes
             }
         }
 
-        public async Task RemovePeer(AsyncPeer peer, IMessage message = null)
+        public async Task RemovePeer(AsyncPeer peer, Message message = null)
         {
             if (_peers.TryRemove(peer.PeerId, out _))
             {

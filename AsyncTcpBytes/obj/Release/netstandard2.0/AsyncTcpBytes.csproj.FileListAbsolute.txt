@@ -3,7 +3,7 @@ C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcpBytes\bin\Release\netstandard2.0\
 C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcpBytes\obj\Release\netstandard2.0\AsyncTcpBytes.csprojAssemblyReference.cache
 C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcpBytes\obj\Release\netstandard2.0\AsyncTcpBytes.AssemblyInfoInputs.cache
 C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcpBytes\obj\Release\netstandard2.0\AsyncTcpBytes.AssemblyInfo.cs
-C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcpBytes\obj\Release\netstandard2.0\AsyncTcpBytes.csproj.CoreCompileInputs.cache
 C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcpBytes\bin\Release\netstandard2.0\AsyncTcpBytes.pdb
 C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcpBytes\obj\Release\netstandard2.0\AsyncTcpBytes.dll
 C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcpBytes\obj\Release\netstandard2.0\AsyncTcpBytes.pdb
+C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcpBytes\obj\Release\netstandard2.0\AsyncTcpBytes.csproj.CoreCompileInputs.cache

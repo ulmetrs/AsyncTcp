@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.IO;
+using System;
 using System.Collections.Generic;
 using System.IO.Pipelines;
 
@@ -8,8 +9,9 @@ namespace AsyncTcpBytes
     {
         internal const int KeepAliveDelay = 1000;
 
+        internal static readonly RecyclableMemoryStreamManager StreamManager = new RecyclableMemoryStreamManager();
+
         internal static IPeerHandler PeerHandler;
-        internal static IMessagePoolManager MessagePoolManager; // Supply Message Pool Implementation, will Return Objects on Sends and Get Objects for Receives if supplied
         internal static int KeepAliveType;
         internal static int ErrorType;
         internal static int KeepAliveInterval;
@@ -17,18 +19,17 @@ namespace AsyncTcpBytes
         internal static PipeOptions ReceivePipeOptions;
 
         private static IDictionary<int, byte[]> _headerBytes;
-        private static IDictionary<int, IMessage> _headerMessages;
+        private static IDictionary<int, Message> _headerMessages;
 
         internal static bool IsConfigured;
 
         // Throw Exception on Client and Server if we try to create with initializing
         public static void Configure(Config config)
         {
-            if (config == null || config.PeerHandler == null || config.MessagePoolManager == null)
+            if (config == null || config.PeerHandler == null)
                 throw new Exception("Must supply a Peer Handler and a Message Pool Manager");
 
             PeerHandler = config.PeerHandler;
-            MessagePoolManager = config.MessagePoolManager;
             ErrorType = config.ErrorType;
             KeepAliveType = config.KeepAliveType;
             KeepAliveInterval = config.KeepAliveInterval;
@@ -36,7 +37,7 @@ namespace AsyncTcpBytes
             ReceivePipeOptions = config.ReceivePipeOptions;
 
             _headerBytes = new Dictionary<int, byte[]>();
-            _headerMessages = new Dictionary<int, IMessage>();
+            _headerMessages = new Dictionary<int, Message>();
 
             IsConfigured = true;
         }
@@ -54,13 +55,13 @@ namespace AsyncTcpBytes
         }
 
         // Lazy Memoize our Zero Size Header Messages for Receiving
-        public static IMessage HeaderMessage(int type)
+        public static Message HeaderMessage(int type)
         {
             if (_headerMessages.TryGetValue(type, out var message))
             {
                 return message;
             }
-            _headerMessages[type] = new HeaderMessage(type);
+            _headerMessages[type] = new Message() { MessageType = type, HeaderOnly = true };
             return _headerMessages[type];
         }
     }
@@ -68,7 +69,6 @@ namespace AsyncTcpBytes
     public class Config
     {
         public IPeerHandler PeerHandler { get; set; } // Supply Callback Handler
-        public IMessagePoolManager MessagePoolManager { get; set; } // Supply Message Pool Implementation, will Return Objects on Sends and Get Objects for Receives if supplied
         public int ErrorType { get; set; } = -2;
         public int KeepAliveType { get; set; } = -1;
         public int KeepAliveInterval { get; set; } = 10000;
