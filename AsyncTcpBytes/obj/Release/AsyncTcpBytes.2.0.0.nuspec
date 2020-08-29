@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>AsyncTcpBytes</id>
+    <version>2.0.0</version>
+    <authors>AsyncTcpBytes</authors>
+    <owners>AsyncTcpBytes</owners>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>Package Description</description>
+    <dependencies>
+      <group targetFramework=".NETStandard2.0">
+        <dependency id="RecyclableMemoryStream" version="1.0.0" exclude="Build,Analyzers" />
+        <dependency id="System.Buffers" version="4.5.1" exclude="Build,Analyzers" />
+        <dependency id="System.IO.Pipelines" version="4.7.2" exclude="Build,Analyzers" />
+        <dependency id="System.Threading.Channels" version="4.7.1" exclude="Build,Analyzers" />
+      </group>
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="C:\Users\Rob\Documents\GitHub\AsyncTcp\AsyncTcpBytes\bin\Release\netstandard2.0\AsyncTcpBytes.dll" target="lib\netstandard2.0\AsyncTcpBytes.dll" />
+  </files>
+</package>

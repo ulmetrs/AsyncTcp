@@ -18,7 +18,6 @@ namespace AsyncTcpBytes
         internal static PipeOptions ReceivePipeOptions;
 
         private static IDictionary<int, byte[]> _headerBytes;
-        private static IDictionary<int, Message> _headerMessages;
 
         internal static bool IsConfigured;
 
@@ -36,7 +35,6 @@ namespace AsyncTcpBytes
             ReceivePipeOptions = config.ReceivePipeOptions;
 
             _headerBytes = new Dictionary<int, byte[]>();
-            _headerMessages = new Dictionary<int, Message>();
 
             IsConfigured = true;
         }
@@ -51,17 +49,6 @@ namespace AsyncTcpBytes
             _headerBytes[type] = new byte[8];
             BitConverter.GetBytes(type).CopyTo(_headerBytes[type], 0);
             return _headerBytes[type];
-        }
-
-        // Lazy Memoize our Zero Size Header Messages for Receiving
-        public static Message HeaderMessage(int type)
-        {
-            if (_headerMessages.TryGetValue(type, out var message))
-            {
-                return message;
-            }
-            _headerMessages[type] = new Message() { MessageType = type, HeaderOnly = true };
-            return _headerMessages[type];
         }
     }
 

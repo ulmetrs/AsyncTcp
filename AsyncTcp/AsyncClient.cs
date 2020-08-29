@@ -7,18 +7,13 @@ namespace AsyncTcp
 {
     public class AsyncClient
     {
-        private readonly IAsyncHandler _handler;
-
         public AsyncPeer Peer { get; private set; }
-
         private bool _alive;
 
-        public AsyncClient(IAsyncHandler handler)
+        public AsyncClient()
         {
-            if (!AsyncTcp.IsInitialized)
-                throw new Exception("AsyncTcp must be initialized before creating a client");
-
-            _handler = handler ?? throw new Exception("Handler cannot be null");
+            if (!AsyncTcp.IsConfigured)
+                throw new Exception("AsyncTcp must be configured before creating a client");
         }
 
         public async Task Start(IPAddress address, int bindPort = 9050)
@@ -31,7 +26,7 @@ namespace AsyncTcp
 
             _alive = true;
 
-            Peer = new AsyncPeer(socket, _handler);
+            Peer = new AsyncPeer(socket);
 
             try
             {

@@ -18,21 +18,20 @@ namespace AsyncTcp
         public long PeerId { get; } = Interlocked.Increment(ref GlobalPeerId);
 
         private readonly Socket _socket;
-        private readonly IAsyncHandler _handler;
-        private readonly Channel<ObjectMessage> _sendChannel;
+        private readonly Pipe _receivePipe;
+        private readonly Channel<(int, object)> _sendChannel;
         private readonly CancellationTokenSource _sendCancel;
 
-        private bool _alive = false;
-        private int _keepAliveCount = 0;
+        private bool _alive;
+        private int _keepAliveCount;
 
         // Peers are constructed from connected sockets
         internal AsyncPeer(
-            Socket socket,
-            IAsyncHandler handler)
+            Socket socket)
         {
             _socket = socket;
-            _handler = handler;
-            _sendChannel = Channel.CreateUnbounded<ObjectMessage>(new UnboundedChannelOptions() { SingleReader = true });
+            _receivePipe = new Pipe(AsyncTcp.ReceivePipeOptions);
+            _sendChannel = Channel.CreateUnbounded<(int, object)>(new UnboundedChannelOptions() { SingleReader = true });
             _sendCancel = new CancellationTokenSource();
         }
 
@@ -42,15 +41,13 @@ namespace AsyncTcp
         {
             _alive = true;
 
-            var pipe = AsyncTcp.Config.PipeOptions != null ? new Pipe(AsyncTcp.Config.PipeOptions) : new Pipe();
-
             // Start the 4 Running Processing Steps for a Peer
-            var receiveTask = ReceiveFromSocket(pipe.Writer);
-            var parseTask = ParseBytes(pipe.Reader);
+            var receiveTask = ReceiveFromSocket(_receivePipe.Writer);
+            var parseTask = ParseBytes(_receivePipe.Reader);
             var sendTask = ProcessSend();
             var keepAliveTask = KeepAlive();
 
-            await _handler.PeerConnected(this).ConfigureAwait(false);
+            await AsyncTcp.PeerHandler.PeerConnected(this).ConfigureAwait(false);
 
             // Wait for sockets to close and parsing to finish
             await receiveTask.ConfigureAwait(false);
@@ -71,7 +68,7 @@ namespace AsyncTcp
             await sendTask.ConfigureAwait(false);
             await keepAliveTask.ConfigureAwait(false);
 
-            await _handler.PeerDisconnected(this).ConfigureAwait(false);
+            await AsyncTcp.PeerHandler.PeerDisconnected(this).ConfigureAwait(false);
         }
 
         // Shutdown called manually or via send error
@@ -94,7 +91,7 @@ namespace AsyncTcp
 
             while (true)
             {
-                memory = writer.GetMemory(AsyncTcp.MinReceiveBufferSize);
+                memory = writer.GetMemory(AsyncTcp.ReceiveBufferSize);
 
                 try
                 {
@@ -131,7 +128,7 @@ namespace AsyncTcp
         {
             ReadResult result;
             ReadOnlySequence<byte> buffer;
-            ByteMessage message = new ByteMessage();
+            ParseInfo info = new ParseInfo();
 
             while (true)
             {
@@ -139,14 +136,14 @@ namespace AsyncTcp
                 buffer = result.Buffer;
 
                 // Parse as many messages as we can from the buffer
-                while (TryParseBuffer(ref buffer, ref message))
+                while (TryParseBuffer(ref buffer, ref info))
                 {
                     // Handle Zero-Length Messages
-                    if (message.Length == 0)
+                    if (info.Size == 0)
                     {
                         try
                         {
-                            await _handler.MessageReceived(this, message.Type, null).ConfigureAwait(false);
+                            await AsyncTcp.PeerHandler.MessageReceived(this, info.Type, null).ConfigureAwait(false);
                         }
                         catch { }
 
@@ -156,12 +153,12 @@ namespace AsyncTcp
                     try
                     {
                         // If the message is compressed, we first need to Decompress the Bytes
-                        if (message.Compressed)
+                        if (info.Compressed)
                         {
                             // Unfortunately, cannot decompress directly from ReadOnlySequence, so fill the required input stream first
-                            using (var inputStream = AsyncTcp.StreamManager.GetStream(null, message.Length))
+                            using (var inputStream = AsyncTcp.StreamManager.GetStream(null, info.Size))
                             {
-                                foreach (var segment in message.Bytes)
+                                foreach (var segment in info.Buffer)
                                 {
 #if NETCOREAPP3_1
                                     await inputStream.WriteAsync(segment).ConfigureAwait(false);
@@ -177,89 +174,36 @@ namespace AsyncTcp
                                 // Now to decompress
                                 using (var compressionStream = new GZipStream(inputStream, CompressionMode.Decompress))
                                 {
-                                    // If using the StreamSerializer, rent a stream and copy to it
-                                    if (AsyncTcp.Config.StreamSerializer != null)
+                                    var bytes = ArrayPool<byte>.Shared.Rent(info.DecompressedSize);
+                                    try
                                     {
-                                        // Rent a managed stream with room for the decompressed bytes
-                                        using (var outputStream = AsyncTcp.StreamManager.GetStream(null, message.DecompressedLength))
-                                        {
-                                            await compressionStream.CopyToAsync(outputStream).ConfigureAwait(false);
+                                        await compressionStream.ReadAsync(bytes, 0, info.DecompressedSize);
 
-                                            // Reset stream position for the deserialize
-                                            outputStream.Position = 0;
+                                        var data = AsyncTcp.Serializer.Deserialize(info.Type, info.DecompressedSize, bytes);
 
-                                            // The one heap alloc we can't get away from
-                                            var data = AsyncTcp.Config.StreamSerializer.Deserialize(message.Type, outputStream);
-
-                                            await _handler.MessageReceived(this, message.Type, data).ConfigureAwait(false);
-                                        }
+                                        await AsyncTcp.PeerHandler.MessageReceived(this, info.Type, data).ConfigureAwait(false);
                                     }
-                                    // Else rent an array and read to it
-                                    else
+                                    finally
                                     {
-                                        byte[] bytes = null;
-                                        try
-                                        {
-                                            bytes = ArrayPool<byte>.Shared.Rent(message.DecompressedLength);
-                                            await compressionStream.ReadAsync(bytes, 0, message.DecompressedLength);
-
-                                            // The one heap alloc we can't get away from
-                                            var data = AsyncTcp.Config.ByteSerializer.Deserialize(message.Type, bytes);
-
-                                            await _handler.MessageReceived(this, message.Type, data).ConfigureAwait(false);
-                                        }
-                                        finally
-                                        {
-                                            ArrayPool<byte>.Shared.Return(bytes);
-                                        }
+                                        ArrayPool<byte>.Shared.Return(bytes);
                                     }
                                 }
                             }
                         }
-                        // If the message was not compressed, the APIs actually favor the byte serializer, since we can copy directly to a buffer
                         else
                         {
-                            if (AsyncTcp.Config.ByteSerializer != null)
+                            var bytes = ArrayPool<byte>.Shared.Rent(info.Size);
+                            try
                             {
-                                byte[] bytes = null;
-                                try
-                                {
-                                    // Rent some bytes for the deserializer and copy directly from the message
-                                    bytes = ArrayPool<byte>.Shared.Rent(message.Length);
-                                    message.Bytes.CopyTo(bytes);
+                                info.Buffer.CopyTo(bytes);
 
-                                    // The one heap alloc we can't get away from
-                                    var data = AsyncTcp.Config.ByteSerializer.Deserialize(message.Type, bytes);
+                                var data = AsyncTcp.Serializer.Deserialize(info.Type, info.Size, bytes);
 
-                                    await _handler.MessageReceived(this, message.Type, data).ConfigureAwait(false);
-                                }
-                                finally
-                                {
-                                    ArrayPool<byte>.Shared.Return(bytes);
-                                }
+                                await AsyncTcp.PeerHandler.MessageReceived(this, info.Type, data).ConfigureAwait(false);
                             }
-                            else
+                            finally
                             {
-                                using (var outputStream = AsyncTcp.StreamManager.GetStream(null, message.Length))
-                                {
-                                    foreach (var segment in message.Bytes)
-                                    {
-#if NETCOREAPP3_1
-                                        await outputStream.WriteAsync(segment).ConfigureAwait(false);
-#else
-                                        var array = segment.GetArray();
-                                        await outputStream.WriteAsync(array.Array, array.Offset, array.Count).ConfigureAwait(false);
-#endif
-                                    }
-
-                                    // Reset stream position for the deserialize
-                                    outputStream.Position = 0;
-
-                                    // The one heap alloc we can't get away from
-                                    var data = AsyncTcp.Config.StreamSerializer.Deserialize(message.Type, outputStream);
-
-                                    await _handler.MessageReceived(this, message.Type, data).ConfigureAwait(false);
-                                }
+                                ArrayPool<byte>.Shared.Return(bytes);
                             }
                         }
                     }
@@ -278,14 +222,14 @@ namespace AsyncTcp
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private bool TryParseBuffer(ref ReadOnlySequence<byte> buffer, ref ByteMessage message)
+        private bool TryParseBuffer(ref ReadOnlySequence<byte> buffer, ref ParseInfo message)
         {
             if (buffer.Length < 9)
             {
                 return false;
             }
 
-            if (!message.ParsedHeader)
+            if (!message.HeaderParsed)
             {
                 var typeSlice = buffer.Slice(0, 4);
                 if (typeSlice.IsSingleSegment)
@@ -302,76 +246,80 @@ namespace AsyncTcp
                 var lengthSlice = buffer.Slice(4, 4);
                 if (lengthSlice.IsSingleSegment)
                 {
-                    message.Length = MemoryMarshal.Read<int>(lengthSlice.First.Span);
+                    message.Size = MemoryMarshal.Read<int>(lengthSlice.First.Span);
                 }
                 else
                 {
                     Span<byte> stackBuffer = stackalloc byte[4];
                     lengthSlice.CopyTo(stackBuffer);
-                    message.Length = MemoryMarshal.Read<int>(stackBuffer);
+                    message.Size = MemoryMarshal.Read<int>(stackBuffer);
                 }
 
                 message.Compressed = false;
-                message.Bytes = default;
+                message.Buffer = default;
 
-                if (message.Length == 0)
+                if (message.Size == 0)
                 {
-                    message.ParsedHeader = false; // Reset parse header flag
+                    message.HeaderParsed = false; // Reset parse header flag
                     buffer = buffer.Slice(9);
                     return true;
                 }
             }
 
-            if (9 + message.Length > buffer.Length)
+            if (9 + message.Size > buffer.Length)
             {
-                message.ParsedHeader = true; // Set this flag so we can skip parsing the header next time
+                message.HeaderParsed = true; // Set this flag so we can skip parsing the header next time
                 return false;
             }
 
-            message.ParsedHeader = false; // Reset parse header flag
+            message.HeaderParsed = false; // Reset parse header flag
             message.Compressed = MemoryMarshal.Read<bool>(buffer.Slice(8, 1).First.Span);
-            message.Bytes = buffer.Slice(9, message.Length);
+            message.Buffer = buffer.Slice(9, message.Size);
 
             if (message.Compressed)
             {
-                var decompressedLengthSlice = buffer.Slice(5 + message.Length, 4);
+                var decompressedLengthSlice = buffer.Slice(5 + message.Size, 4);
                 if (decompressedLengthSlice.IsSingleSegment)
                 {
-                    message.DecompressedLength = MemoryMarshal.Read<int>(decompressedLengthSlice.First.Span);
+                    message.DecompressedSize = MemoryMarshal.Read<int>(decompressedLengthSlice.First.Span);
                 }
                 else
                 {
                     Span<byte> stackBuffer = stackalloc byte[4];
                     decompressedLengthSlice.CopyTo(stackBuffer);
-                    message.DecompressedLength = MemoryMarshal.Read<int>(stackBuffer);
+                    message.DecompressedSize = MemoryMarshal.Read<int>(stackBuffer);
                 }
             }
 
-            buffer = buffer.Slice(9 + message.Length);
+            buffer = buffer.Slice(9 + message.Size);
             return true;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public Task Send(int type)
-        {
-            return Send(AsyncTcp.HeaderMessages(type));
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public Task Send(int type, object data)
-        {
-            return Send(new ObjectMessage() { Type = type, Data = data });
-        }
-
-        // Queue messages in the SendChannel for processing, swallow on error
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public async Task Send(ObjectMessage message)
+        public async Task Send(int type)
         {
             try
             {
                 await _sendChannel
                    .Writer
-                   .WriteAsync(message, _sendCancel.Token)
+                   .WriteAsync((type, null), _sendCancel.Token)
+                   .ConfigureAwait(false);
+            }
+            catch { }
+        }
+
+        // Messages are assumed to be rented from the Message Pool Manager
+        // If ManualReturn() resolves to false (default) the message will be returned to the pool
+        // Ensure IMessage AND MemoryPoolManager are implemented correctly, there are no
+        // Guard rails here
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public async Task Send(int type, object payload)
+        {
+            try
+            {
+                await _sendChannel
+                   .Writer
+                   .WriteAsync((type, payload), _sendCancel.Token)
                    .ConfigureAwait(false);
             }
             catch { }
@@ -384,18 +332,18 @@ namespace AsyncTcp
             while (_alive && await _sendChannel.Reader.WaitToReadAsync(_sendCancel.Token).ConfigureAwait(false))
             {
                 // Once signaled, continuously read data while it is available
-                while (_alive && _sendChannel.Reader.TryRead(out var message))
+                while (_alive && _sendChannel.Reader.TryRead(out (int, object) message))
                 {
-                    await ProcessSend(message).ConfigureAwait(false);
+                    await ProcessSend(message.Item1, message.Item2).ConfigureAwait(false);
                 }
             }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public async Task ProcessSend(ObjectMessage message)
+        public async Task ProcessSend(int type, object payload)
         {
             // Send Zero-Length Messages, we cache the bytes for these messages since they will always be the same 9 byte regions
-            if (message.Data == null)
+            if (payload == null)
             {
                 try
                 {
@@ -403,7 +351,7 @@ namespace AsyncTcp
                     while (bytesSent < 9)
                     {
                         bytesSent += await _socket
-                            .SendAsync(new ArraySegment<byte>(AsyncTcp.HeaderBytes(message.Type), bytesSent, 9 - bytesSent), SocketFlags.None)
+                            .SendAsync(new ArraySegment<byte>(AsyncTcp.HeaderBytes(type), bytesSent, 9 - bytesSent), SocketFlags.None)
                             .ConfigureAwait(false);
                     }
                 }
@@ -412,42 +360,29 @@ namespace AsyncTcp
                 return;
             }
 
-            if (AsyncTcp.Config.StreamSerializer != null)
+            var bytes = AsyncTcp.Serializer.Serialize(type, payload);
+
+            using (var inputStream = AsyncTcp.StreamManager.GetStream(null, bytes.Length))
             {
-                using (var serializedStream = AsyncTcp.StreamManager.GetStream())
-                {
-                    // Serialize object into the managed stream
-                    AsyncTcp.Config.StreamSerializer.Serialize(serializedStream, message.Data);
+                await inputStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
 
-                    // Reset stream position for next copy
-                    serializedStream.Position = 0;
+                // Reset stream position for next copy
+                inputStream.Position = 0;
 
-                    await CompressAndSend(serializedStream, message.Type).ConfigureAwait(false);
-                }
-            }
-            else
-            {
-                var bytes = AsyncTcp.Config.ByteSerializer.Serialize(message.Data);
-
-                using (var serializedStream = AsyncTcp.StreamManager.GetStream(null, bytes.Length))
-                {
-                    serializedStream.Write(bytes, 0, bytes.Length);
-                    // Reset stream position for next copy
-                    serializedStream.Position = 0;
-
-                    await CompressAndSend(serializedStream, message.Type).ConfigureAwait(false);
-                }
+                await CompressAndSend(type, inputStream).ConfigureAwait(false);
             }
 
             // If the packet type is of ErrorType call Shutdown and let the peer gracefully finish processing
-            if (message.Type == AsyncTcp.Config.ErrorType)
+            if (type == AsyncTcp.ErrorType)
             {
                 ShutDown();
             }
         }
 
+        private readonly byte[] header = new byte[9];
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private async Task CompressAndSend(Stream inputStream, int type)
+        private async Task CompressAndSend(int type, Stream inputStream)
         {
             using (var outputStream = AsyncTcp.StreamManager.GetStream())
             {
@@ -457,7 +392,7 @@ namespace AsyncTcp
                 outputStream.Position = 9;
 
                 // If compression is enabled, copy the compressed bytes
-                if (AsyncTcp.Config.UseCompression && inputStream.Length >= AsyncTcp.CompressionCuttoff)
+                if (AsyncTcp.UseCompression && inputStream.Length >= AsyncTcp.CompressionCutoff)
                 {
                     useCompression = true;
 
@@ -474,12 +409,14 @@ namespace AsyncTcp
 
                 var size = (int)outputStream.Length;
 
-                // Reset position to write header
+                // Go back and write the header now that we know the size
                 outputStream.Position = 0;
-                WriteHeader(outputStream, type, size - 9, useCompression);
+                WriteInt(header, 0, type);
+                WriteInt(header, 4, size - 8);
+                header[9] = Convert.ToByte(useCompression);
+                outputStream.Write(header, 0, 9);
 
-                // Grab the underlying stream buffer and write it to the socket
-                // Would be excellent if there was ReadOnlySequence overloads for the RecyclableStream AND Socket API, but there isn't
+                outputStream.Position = 0;
                 if (outputStream.TryGetBuffer(out var buffer))
                 {
                     try
@@ -498,20 +435,12 @@ namespace AsyncTcp
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void WriteHeader(Stream stream, int type, int length, bool compressed)
+        private void WriteInt(byte[] buffer, int offset, int value)
         {
-            Span<byte> stackBuffer = stackalloc byte[9];
-            var typeSlice = stackBuffer.Slice(0, 4);
-            MemoryMarshal.Write(typeSlice, ref type);
-            var lengthSlice = stackBuffer.Slice(4, 4);
-            MemoryMarshal.Write(lengthSlice, ref length);
-            var compressedSlice = stackBuffer.Slice(8, 1);
-            MemoryMarshal.Write(compressedSlice, ref compressed);
-#if NETCOREAPP3_1
-            stream.Write(stackBuffer);
-#else
-            stream.Write(stackBuffer.ToArray(), 0, 9);
-#endif
+            for (int i = 0, j = 0; i < 4; i++, j++)
+            {
+                buffer[offset + i] = (byte)(value >> (8 * j));
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -536,7 +465,7 @@ namespace AsyncTcp
                         break;
                     }
 
-                    await Send(AsyncTcp.Config.KeepAliveType).ConfigureAwait(false);
+                    await Send(AsyncTcp.KeepAliveType).ConfigureAwait(false);
                 }
                 else
                 {

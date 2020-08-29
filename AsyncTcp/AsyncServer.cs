@@ -8,20 +8,17 @@ namespace AsyncTcp
 {
     public class AsyncServer
     {
-        private readonly IAsyncHandler _handler;
         private readonly ConcurrentDictionary<long, AsyncPeer> _peers;
-
         private Socket _listener;
         private bool _alive;
 
         public string HostName { get; private set; }
 
-        public AsyncServer(IAsyncHandler handler)
+        public AsyncServer()
         {
-            if (!AsyncTcp.IsInitialized)
-                throw new Exception("AsyncTcp must be initialized before creating a server");
+            if (!AsyncTcp.IsConfigured)
+                throw new Exception("AsyncTcp must be configured before creating a server");
 
-            _handler = handler ?? throw new Exception("Handler cannot be null");
             _peers = new ConcurrentDictionary<long, AsyncPeer>();
         }
 
@@ -60,7 +57,7 @@ namespace AsyncTcp
 
         private async Task ProcessSocket(Socket socket)
         {
-            var peer = new AsyncPeer(socket, _handler);
+            var peer = new AsyncPeer(socket);
             _peers[peer.PeerId] = peer;
 
             try
@@ -69,7 +66,7 @@ namespace AsyncTcp
             }
             catch { }
 
-            await RemovePeer(peer).ConfigureAwait(false);
+            _peers.TryRemove(peer.PeerId, out _);
         }
 
         public void ShutDown()
@@ -90,16 +87,11 @@ namespace AsyncTcp
             }
         }
 
-        public Task RemovePeer(AsyncPeer peer, object data = null)
+        public async Task RemovePeer(AsyncPeer peer, int type, object payload = null)
         {
-            return RemovePeer(peer.PeerId, data);
-        }
-
-        public async Task RemovePeer(long peerId, object data = null)
-        {
-            if (_peers.TryRemove(peerId, out AsyncPeer peer))
+            if (_peers.TryRemove(peer.PeerId, out _))
             {
-                await peer.Send(AsyncTcp.Config.ErrorType, data).ConfigureAwait(false);
+                await peer.Send(type, payload).ConfigureAwait(false);
             }
         }
     }

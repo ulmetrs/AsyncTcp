@@ -40,13 +40,12 @@ namespace ClientApp
 
         // Simple implementation of packing the stream however you want from the Message you Queued to send
         // Custom bit packing along with pooled object can provide the optimal performance for this
-        public async Task PackMessage(AsyncPeer peer, Message message, Stream packToStream)
+        public async Task PackMessage(AsyncPeer peer, int type, object payload, Stream packToStream)
         {
             using (var inputStream = AsyncTcp.StreamManager.GetStream())
             {
                 // Serialize object into the managed stream
-                // Stupid Utf8Json needs Breaks when this is not cast to object
-                Utf8Json.JsonSerializer.Serialize(inputStream, (object)message);
+                Utf8Json.JsonSerializer.Serialize(inputStream, payload);
 
                 // Reset stream position for next copy
                 inputStream.Position = 0;
@@ -55,6 +54,7 @@ namespace ClientApp
                 if (inputStream.Length >= 860)
                 {
                     packToStream.WriteByte(Convert.ToByte(true));
+
                     using (var compressionStream = new GZipStream(packToStream, CompressionMode.Compress, true))
                     {
                         await inputStream.CopyToAsync(compressionStream).ConfigureAwait(false);
@@ -70,7 +70,7 @@ namespace ClientApp
         }
 
         // Implement this to dispose of the message after a send if you are pooling objects
-        public Task DisposeMessage(AsyncPeer peer, Message message)
+        public Task DisposeMessage(AsyncPeer peer, int type, object payload)
         {
             return Task.CompletedTask; 
         }
@@ -79,6 +79,13 @@ namespace ClientApp
         // Custom bit packing along with pooled object can provide the optimal performance for this
         public async Task UnpackMessage(AsyncPeer peer, int type, Stream unpackFromStream)
         {
+            // Handle Zero-Length Messages
+            if (unpackFromStream == null)
+            {
+                await HandleMessage(peer, type, unpackFromStream).ConfigureAwait(false);
+                return;
+            }
+
             var compressed = Convert.ToBoolean(unpackFromStream.ReadByte());
 
             // Stupid Utf8Json Wont Serialize a Stream with an offset, so we need to make this either way
@@ -101,19 +108,23 @@ namespace ClientApp
                 {
                     // Stupid Utf8Json Wont Serialize a Stream with an offset, so we need to make this either way
                     await unpackFromStream.CopyToAsync(outputStream).ConfigureAwait(false);
+
+                    // Reset stream position for the deserialize
+                    outputStream.Position = 0;
+
                     // Handle the stream
                     await HandleMessage(peer, type, outputStream).ConfigureAwait(false);
                 }
             }
         }
 
-        private class Test : Message
+        private class Test
         {
             public string Name { get; set; }
             public int Type { get; set; }
         }
 
-        private class Error : Message
+        private class Error
         {
             public string Err { get; set; }
         }
@@ -211,11 +222,10 @@ namespace ClientApp
             {
                 var letter = new TestMessage()
                 {
-                    MessageType = 1,
                     index = i,
                     data = _xorShifter.GetRandomBytes(5000),
                 };
-                await client.Peer.Send(letter).ConfigureAwait(false);
+                await client.Peer.Send(1, letter).ConfigureAwait(false);
                 await Task.Delay(_random.Next(1, 3) * 1000);
             }
         }

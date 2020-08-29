@@ -66,7 +66,7 @@ namespace AsyncTcpBytes
             }
             catch { }
 
-            await RemovePeer(peer).ConfigureAwait(false);
+            _peers.TryRemove(peer.PeerId, out _);
         }
 
         public void ShutDown()
@@ -87,12 +87,11 @@ namespace AsyncTcpBytes
             }
         }
 
-        public async Task RemovePeer(AsyncPeer peer, Message message = null)
+        public async Task RemovePeer(AsyncPeer peer, int type, object payload = null)
         {
             if (_peers.TryRemove(peer.PeerId, out _))
             {
-                var send = message != null ? message : AsyncTcp.HeaderMessage(AsyncTcp.ErrorType);
-                await peer.Send(send).ConfigureAwait(false);
+                await peer.Send(type, payload).ConfigureAwait(false);
             }
         }
     }

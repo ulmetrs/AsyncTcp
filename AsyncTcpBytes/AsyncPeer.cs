@@ -17,8 +17,8 @@ namespace AsyncTcpBytes
 
         private readonly Socket _socket;
         private readonly Pipe _receivePipe;
-        private Channel<Message> _sendChannel;
-        private CancellationTokenSource _sendCancel;
+        private readonly Channel<(int, object)> _sendChannel;
+        private readonly CancellationTokenSource _sendCancel;
 
         private bool _alive;
         private int _keepAliveCount;
@@ -29,7 +29,7 @@ namespace AsyncTcpBytes
         {
             _socket = socket;
             _receivePipe = new Pipe(AsyncTcp.ReceivePipeOptions);
-            _sendChannel = Channel.CreateUnbounded<Message>(new UnboundedChannelOptions() { SingleReader = true });
+            _sendChannel = Channel.CreateUnbounded<(int, object)>(new UnboundedChannelOptions() { SingleReader = true });
             _sendCancel = new CancellationTokenSource();
         }
 
@@ -238,7 +238,7 @@ namespace AsyncTcpBytes
             {
                 await _sendChannel
                    .Writer
-                   .WriteAsync(AsyncTcp.HeaderMessage(type), _sendCancel.Token)
+                   .WriteAsync((type, null), _sendCancel.Token)
                    .ConfigureAwait(false);
             }
             catch { }
@@ -249,13 +249,13 @@ namespace AsyncTcpBytes
         // Ensure IMessage AND MemoryPoolManager are implemented correctly, there are no
         // Guard rails here
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public async Task Send(Message message)
+        public async Task Send(int type, object payload)
         {
             try
             {
                 await _sendChannel
                    .Writer
-                   .WriteAsync(message, _sendCancel.Token)
+                   .WriteAsync((type, payload), _sendCancel.Token)
                    .ConfigureAwait(false);
             }
             catch { }
@@ -268,19 +268,19 @@ namespace AsyncTcpBytes
             while (_alive && await _sendChannel.Reader.WaitToReadAsync(_sendCancel.Token).ConfigureAwait(false))
             {
                 // Once signaled, continuously read data while it is available
-                while (_alive && _sendChannel.Reader.TryRead(out var message))
+                while (_alive && _sendChannel.Reader.TryRead(out (int, object) message))
                 {
-                    await ProcessSend(message).ConfigureAwait(false);
+                    await ProcessSend(message.Item1, message.Item2).ConfigureAwait(false);
                 }
             }
         }
 
-        private byte[] header = new byte[8];
+        private readonly byte[] header = new byte[8];
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public async Task ProcessSend(Message message)
+        public async Task ProcessSend(int type, object payload)
         {
-            if (message.HeaderOnly)
+            if (payload == null)
             {
                 try
                 {
@@ -288,7 +288,7 @@ namespace AsyncTcpBytes
                     while (bytesSent < 8)
                     {
                         bytesSent += await _socket
-                            .SendAsync(new ArraySegment<byte>(AsyncTcp.HeaderBytes(message.MessageType), bytesSent, 8 - bytesSent), SocketFlags.None)
+                            .SendAsync(new ArraySegment<byte>(AsyncTcp.HeaderBytes(type), bytesSent, 8 - bytesSent), SocketFlags.None)
                             .ConfigureAwait(false);
                     }
                 }
@@ -302,12 +302,14 @@ namespace AsyncTcpBytes
                 // Skip the header and pack the stream
                 stream.Position = 8;
 
-                await AsyncTcp.PeerHandler.PackMessage(this, message, stream).ConfigureAwait(false);
+                await AsyncTcp.PeerHandler.PackMessage(this, type, payload, stream).ConfigureAwait(false);
+
+                var size = (int)stream.Length;
 
                 // Go back and write the header now that we know the size
                 stream.Position = 0;
-                WriteInt(header, 0, message.MessageType);
-                WriteInt(header, 4, (int)stream.Length - 8);
+                WriteInt(header, 0, type);
+                WriteInt(header, 4, size - 8);
                 stream.Write(header, 0, 8);
 
                 stream.Position = 0;
@@ -316,10 +318,10 @@ namespace AsyncTcpBytes
                     try
                     {
                         int bytesSent = 0;
-                        while (bytesSent < buffer.Count)
+                        while (bytesSent < size)
                         {
                             bytesSent += await _socket
-                                .SendAsync(new ArraySegment<byte>(buffer.Array, buffer.Offset + bytesSent, buffer.Count - bytesSent), SocketFlags.None)
+                                .SendAsync(new ArraySegment<byte>(buffer.Array, buffer.Offset + bytesSent, size - bytesSent), SocketFlags.None)
                                 .ConfigureAwait(false);
                         }
                     }
@@ -328,12 +330,12 @@ namespace AsyncTcpBytes
             }
 
             // If the packet type is of ErrorType call Shutdown and let the peer gracefully finish processing
-            if (message.MessageType == AsyncTcp.ErrorType)
+            if (type == AsyncTcp.ErrorType)
             {
                 ShutDown();
             }
 
-            await AsyncTcp.PeerHandler.DisposeMessage(this, message);
+            await AsyncTcp.PeerHandler.DisposeMessage(this, type, payload);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -369,7 +371,7 @@ namespace AsyncTcpBytes
                         break;
                     }
 
-                    await Send(AsyncTcp.HeaderMessage(AsyncTcp.KeepAliveType)).ConfigureAwait(false);
+                    await Send(AsyncTcp.KeepAliveType).ConfigureAwait(false);
                 }
                 else
                 {
