@@ -7,46 +7,31 @@ namespace AsyncTcp
 {
     public static class AsyncTcp
     {
-        public static readonly RecyclableMemoryStreamManager StreamManager = new RecyclableMemoryStreamManager();
+        // Free to set
+        public static int ErrorType { get; set; } = -2;
+        public static int KeepAliveType { get; set; } = -1;
+        public static int KeepAliveInterval { get; set; } = 10;
+        public static StreamPipeReaderOptions ReceivePipeOptions { get; set; } = new StreamPipeReaderOptions();
+        public static RecyclableMemoryStreamManager StreamManager { get; set; } = new RecyclableMemoryStreamManager();
 
-        internal const int KeepAliveDelay = 1000;
-        internal const int CompressionCutoff = 860;
+        // Must initialize
 
         internal static IPeerHandler PeerHandler;
-        internal static ISerializer Serializer;
-        internal static bool UseCompression;
-        internal static int KeepAliveType;
-        internal static int ErrorType;
-        internal static int KeepAliveInterval;
-        internal static int ReceiveBufferSize;
-        internal static PipeOptions ReceivePipeOptions;
+
+        internal static bool Initialized;
 
         private static IDictionary<int, byte[]> _headerBytes;
 
-        internal static bool IsConfigured;
-
-        // Throw Exception on Client and Server if we try to create with initializing
-        public static void Configure(Config config)
+        public static void Initialize(IPeerHandler peerHandler)
         {
-            if (config == null || config.PeerHandler == null || config.Serializer == null)
-                throw new Exception("Must supply a Peer Handler and Serializer in Configuration");
-
-            PeerHandler = config.PeerHandler;
-            Serializer = config.Serializer;
-            UseCompression = config.UseCompression;
-            ErrorType = config.ErrorType;
-            KeepAliveType = config.KeepAliveType;
-            KeepAliveInterval = config.KeepAliveInterval;
-            ReceiveBufferSize = config.ReceiveBufferSize;
-            ReceivePipeOptions = config.ReceivePipeOptions;
+            PeerHandler = peerHandler;
+            Initialized = true;
 
             _headerBytes = new Dictionary<int, byte[]>();
-
-            IsConfigured = true;
         }
 
         // Lazy Memoize our Zero Size Header Bytes for Sending
-        public static byte[] HeaderBytes(int type)
+        internal static byte[] HeaderBytes(int type)
         {
             if (_headerBytes.TryGetValue(type, out var bytes))
             {
@@ -56,17 +41,5 @@ namespace AsyncTcp
             BitConverter.GetBytes(type).CopyTo(_headerBytes[type], 0);
             return _headerBytes[type];
         }
-    }
-
-    public class Config
-    {
-        public IPeerHandler PeerHandler { get; set; } // Supply Handler
-        public ISerializer Serializer { get; set; } // Supply Serializer
-        public bool UseCompression { get; set; } = true;
-        public int ErrorType { get; set; } = -2;
-        public int KeepAliveType { get; set; } = -1;
-        public int KeepAliveInterval { get; set; } = 10000;
-        public int ReceiveBufferSize { get; set; } = 512;
-        public PipeOptions ReceivePipeOptions { get; set; } = PipeOptions.Default;
     }
 }

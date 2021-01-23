@@ -12,14 +12,14 @@ namespace AsyncTcpBytes
 
         public AsyncClient()
         {
-            if (!AsyncTcp.IsConfigured)
-                throw new Exception("AsyncTcp must be configured before creating a client");
+            if (!AsyncTcp.Initialized)
+                throw new Exception("AsyncTcp must be initialized before creating a client");
         }
 
         public async Task Start(IPAddress address, int bindPort = 9050)
         {
             if (_alive)
-                throw new Exception("Cannot start client while alive");
+                throw new Exception("Cannot start, client is running");
 
             var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
             await socket.ConnectAsync(new IPEndPoint(address, bindPort)).ConfigureAwait(false);

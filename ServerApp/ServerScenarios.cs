@@ -11,12 +11,7 @@ namespace ServerApp
     {
         public ServerScenarios()
         {
-            var config = new Config()
-            {
-                PeerHandler = this
-            };
-
-            AsyncTcp.Configure(config);
+            AsyncTcp.Initialize(this);
         }
 
         public async Task PeerConnected(AsyncPeer peer)

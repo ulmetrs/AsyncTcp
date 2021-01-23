@@ -17,11 +17,7 @@ namespace ClientApp
 
         public ClientScenarios(IPAddress address)
         {
-            var config = new Config()
-            {
-                PeerHandler = this
-            };
-            AsyncTcp.Configure(config);
+            AsyncTcp.Initialize(this);
 
             _address = address;
             _xorShifter = new XorShift(true);

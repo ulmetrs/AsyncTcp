@@ -16,8 +16,8 @@ namespace AsyncTcp
 
         public AsyncServer()
         {
-            if (!AsyncTcp.IsConfigured)
-                throw new Exception("AsyncTcp must be configured before creating a server");
+            if (!AsyncTcp.Initialized)
+                throw new Exception("AsyncTcp must be initialized before creating a server");
 
             _peers = new ConcurrentDictionary<long, AsyncPeer>();
         }
@@ -41,12 +41,10 @@ namespace AsyncTcp
             Socket socket;
             try
             {
-                // Accept all connections while server running
                 while (true)
                 {
                     socket = await _listener.AcceptAsync().ConfigureAwait(false);
                     socket.NoDelay = true;
-                    // Process the socket
                     _ = ProcessSocket(socket);
                 }
             }
@@ -58,7 +56,7 @@ namespace AsyncTcp
         private async Task ProcessSocket(Socket socket)
         {
             var peer = new AsyncPeer(socket);
-            _peers[peer.PeerId] = peer;
+            _peers.TryAdd(peer.PeerId, peer);
 
             try
             {

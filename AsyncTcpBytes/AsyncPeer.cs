@@ -16,7 +16,6 @@ namespace AsyncTcpBytes
         public long PeerId { get; } = Interlocked.Increment(ref GlobalPeerId);
 
         private readonly Socket _socket;
-        private readonly Pipe _receivePipe;
         private readonly Channel<(int, object)> _sendChannel;
         private readonly CancellationTokenSource _sendCancel;
 
@@ -28,7 +27,6 @@ namespace AsyncTcpBytes
             Socket socket)
         {
             _socket = socket;
-            _receivePipe = new Pipe(AsyncTcp.ReceivePipeOptions);
             _sendChannel = Channel.CreateUnbounded<(int, object)>(new UnboundedChannelOptions() { SingleReader = true });
             _sendCancel = new CancellationTokenSource();
         }
@@ -39,9 +37,8 @@ namespace AsyncTcpBytes
         {
             _alive = true;
 
-            // Start the 4 Running Processing Steps for a Peer
-            var receiveTask = ReceiveFromSocket(_receivePipe.Writer);
-            var parseTask = ParseBytes(_receivePipe.Reader);
+            // Start the 3 Running Processing Steps for a Peer
+            var receiveTask = ProcessReceive();
             var sendTask = ProcessSend();
             var keepAliveTask = KeepAlive();
 
@@ -49,7 +46,6 @@ namespace AsyncTcpBytes
 
             // Wait for sockets to close and parsing to finish
             await receiveTask.ConfigureAwait(false);
-            await parseTask.ConfigureAwait(false);
 
             // This prevents us from re-entering the 'WaitToReadAsync' loop after a shutdown call, but
             // does not break us out.  Its possible to re-enter the 'WaitToReadAsync' AFTER the
@@ -79,99 +75,67 @@ namespace AsyncTcpBytes
             try { _socket.Close(); } catch { }
         }
 
-        // Pipelines optimized method of Receiving socket bytes
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private async Task ReceiveFromSocket(PipeWriter writer)
+        private async Task ProcessReceive()
         {
-            Memory<byte> memory;
-            int bytesRead;
-            FlushResult result;
+            var netStream = new NetworkStream(_socket);
+            var reader = PipeReader.Create(netStream, AsyncTcp.ReceivePipeOptions);
+            var info = new ParseInfo();
 
-            while (true)
+            try
             {
-                memory = writer.GetMemory(AsyncTcp.ReceiveBufferSize);
-
-                try
+                while (true)
                 {
+                    ReadResult result = await reader.ReadAsync().ConfigureAwait(false);
+                    ReadOnlySequence<byte> buffer = result.Buffer;
+
+                    // Parse as many messages as we can from the buffer
+                    while (TryParseBuffer(ref buffer, info))
+                    {
+                        // Handle Keep Alive Check
+                        if (info.Type == AsyncTcp.KeepAliveType)
+                        {
+                            // Reset out KeepAliveCount to indicate we have received some data from the client
+                            Interlocked.Exchange(ref _keepAliveCount, 0);
+                        }
+
+                        // Handle Zero-Size Messages from Cache
+                        if (info.Size == 0)
+                        {
+                            await AsyncTcp.PeerHandler.UnpackMessage(this, info.Type, null).ConfigureAwait(false);
+
+                            continue;
+                        }
+
+                        using (var stream = AsyncTcp.StreamManager.GetStream(null, info.Size))
+                        {
+                            foreach (var segment in info.Buffer)
+                            {
 #if NETCOREAPP3_1
-                    bytesRead = await _socket.ReceiveAsync(memory, SocketFlags.None).ConfigureAwait(false);
+                                await stream.WriteAsync(segment).ConfigureAwait(false);
 #else
-                    bytesRead = await _socket.ReceiveAsync(memory.GetArray(), SocketFlags.None).ConfigureAwait(false);
+                                var array = segment.GetArray();
+                                await stream.WriteAsync(array.Array, array.Offset, array.Count).ConfigureAwait(false);
 #endif
-                    Interlocked.Exchange(ref _keepAliveCount, 0);
-                    if (bytesRead == 0)
+                            }
+
+                            stream.Position = 0;
+
+                            await AsyncTcp.PeerHandler.UnpackMessage(this, info.Type, stream).ConfigureAwait(false);
+                        }
+                    }
+
+                    reader.AdvanceTo(buffer.Start, buffer.End);
+
+                    if (result.IsCompleted)
                     {
                         break;
                     }
-                    writer.Advance(bytesRead);
-                }
-                catch
-                {
-                    break;
-                }
-
-                result = await writer.FlushAsync().ConfigureAwait(false);
-
-                if (result.IsCompleted)
-                {
-                    break;
                 }
             }
-
-            await writer.CompleteAsync().ConfigureAwait(false);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private async Task ParseBytes(PipeReader reader)
-        {
-            ReadResult result;
-            ReadOnlySequence<byte> buffer;
-            ParseInfo info = new ParseInfo();
-
-            while (true)
+            catch
             {
-                result = await reader.ReadAsync().ConfigureAwait(false);
-                buffer = result.Buffer;
-
-                // Parse as many messages as we can from the buffer
-                while (TryParseBuffer(ref buffer, info))
-                {
-                    // Handle Zero-Size Messages from Cache
-                    if (info.Size == 0)
-                    {
-                        try
-                        {
-                            await AsyncTcp.PeerHandler.UnpackMessage(this, info.Type, null).ConfigureAwait(false);
-                        }
-                        catch { }
-
-                        continue;
-                    }
-
-                    using (var stream = AsyncTcp.StreamManager.GetStream(null, info.Size))
-                    {
-                        foreach (var segment in info.Buffer)
-                        {
-#if NETCOREAPP3_1
-                            await stream.WriteAsync(segment).ConfigureAwait(false);
-#else
-                            var array = segment.GetArray();
-                            await stream.WriteAsync(array.Array, array.Offset, array.Count).ConfigureAwait(false);
-#endif
-                        }
-
-                        stream.Position = 0;
-
-                        await AsyncTcp.PeerHandler.UnpackMessage(this, info.Type, stream).ConfigureAwait(false);
-                    }
-                }
-
-                reader.AdvanceTo(buffer.Start, buffer.End);
-
-                if (result.IsCompleted)
-                {
-                    break;
-                }
+                ShutDown();
             }
 
             await reader.CompleteAsync().ConfigureAwait(false);
@@ -244,10 +208,6 @@ namespace AsyncTcpBytes
             catch { }
         }
 
-        // Messages are assumed to be rented from the Message Pool Manager
-        // If ManualReturn() resolves to false (default) the message will be returned to the pool
-        // Ensure IMessage AND MemoryPoolManager are implemented correctly, there are no
-        // Guard rails here
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public async Task Send(int type, object payload)
         {
@@ -264,15 +224,19 @@ namespace AsyncTcpBytes
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private async Task ProcessSend()
         {
-            // Waits for a signal from the channel that data is ready to be read
-            while (_alive && await _sendChannel.Reader.WaitToReadAsync(_sendCancel.Token).ConfigureAwait(false))
+            try
             {
-                // Once signaled, continuously read data while it is available
-                while (_alive && _sendChannel.Reader.TryRead(out (int, object) message))
+                // Waits for a signal from the channel that data is ready to be read
+                while (_alive && await _sendChannel.Reader.WaitToReadAsync(_sendCancel.Token).ConfigureAwait(false))
                 {
-                    await ProcessSend(message.Item1, message.Item2).ConfigureAwait(false);
+                    // Once signaled, continuously read data while it is available
+                    while (_alive && _sendChannel.Reader.TryRead(out (int, object) message))
+                    {
+                        await ProcessSend(message.Item1, message.Item2).ConfigureAwait(false);
+                    }
                 }
             }
+            catch { }
         }
 
         private readonly byte[] header = new byte[8];
@@ -294,6 +258,12 @@ namespace AsyncTcpBytes
                 }
                 catch { }
 
+                // If the packet type is of ErrorType call Shutdown and let the peer gracefully finish processing
+                if (type == AsyncTcp.ErrorType)
+                {
+                    ShutDown();
+                }
+
                 return;
             }
 
@@ -304,12 +274,10 @@ namespace AsyncTcpBytes
 
                 await AsyncTcp.PeerHandler.PackMessage(this, type, payload, stream).ConfigureAwait(false);
 
-                var size = (int)stream.Length;
-
                 // Go back and write the header now that we know the size
                 stream.Position = 0;
                 WriteInt(header, 0, type);
-                WriteInt(header, 4, size - 8);
+                WriteInt(header, 4, (int)stream.Length - 8);
                 stream.Write(header, 0, 8);
 
                 stream.Position = 0;
@@ -318,10 +286,10 @@ namespace AsyncTcpBytes
                     try
                     {
                         int bytesSent = 0;
-                        while (bytesSent < size)
+                        while (bytesSent < buffer.Count)
                         {
                             bytesSent += await _socket
-                                .SendAsync(new ArraySegment<byte>(buffer.Array, buffer.Offset + bytesSent, size - bytesSent), SocketFlags.None)
+                                .SendAsync(new ArraySegment<byte>(buffer.Array, buffer.Offset + bytesSent, buffer.Count - bytesSent), SocketFlags.None)
                                 .ConfigureAwait(false);
                         }
                     }
@@ -347,18 +315,18 @@ namespace AsyncTcpBytes
             }
         }
 
+        private readonly int delayMS = 1000;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private async Task KeepAlive()
         {
-            var interval = Math.Max(3, AsyncTcp.KeepAliveInterval / AsyncTcp.KeepAliveDelay);
-
             var count = AsyncTcp.KeepAliveInterval;
 
-            await Task.Delay(AsyncTcp.KeepAliveDelay).ConfigureAwait(false);
+            await Task.Delay(delayMS).ConfigureAwait(false);
 
             while (_alive)
             {
-                if (count == interval)
+                if (count == AsyncTcp.KeepAliveInterval)
                 {
                     count = 0;
 
@@ -378,7 +346,7 @@ namespace AsyncTcpBytes
                     count++;
                 }
 
-                await Task.Delay(AsyncTcp.KeepAliveDelay).ConfigureAwait(false);
+                await Task.Delay(delayMS).ConfigureAwait(false);
             }
         }
     }
