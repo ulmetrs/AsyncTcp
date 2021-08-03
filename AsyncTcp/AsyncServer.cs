@@ -8,8 +8,11 @@ namespace AsyncTcp
 {
     public class AsyncServer
     {
-        private readonly ConcurrentDictionary<long, AsyncPeer> _peers;
-        private Socket _listener;
+        private static readonly IPEndPoint _blankEndpoint = new IPEndPoint(IPAddress.Any, 0);
+
+        private Socket _udpSocket;
+        private Socket _tcpSocket;
+        private readonly ConcurrentDictionary<IPAddress, AsyncPeer> _peers;
         private bool _alive;
 
         public string HostName { get; private set; }
@@ -19,7 +22,7 @@ namespace AsyncTcp
             if (!AsyncTcp.Initialized)
                 throw new Exception("AsyncTcp must be initialized before creating a server");
 
-            _peers = new ConcurrentDictionary<long, AsyncPeer>();
+            _peers = new ConcurrentDictionary<IPAddress, AsyncPeer>();
         }
 
         public async Task Start(IPAddress address = null, int bindPort = 9050)
@@ -28,35 +31,43 @@ namespace AsyncTcp
                 throw new Exception("Cannot start, server is running");
 
             if (address == null)
-                address = await Utils.GetIPAddress().ConfigureAwait(false);
+                throw new Exception("Specify server address to use");
 
-            _listener = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-            _listener.Bind(new IPEndPoint(address, bindPort));
-            _listener.Listen(100);
+            if (address.AddressFamily != AddressFamily.InterNetwork)
+                throw new Exception("Address family must be of type Internetwork for UDP support");
 
-            _alive = true;
+            _udpSocket = new Socket(address.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
+            _udpSocket.Bind(new IPEndPoint(IPAddress.Any, bindPort));
+            _tcpSocket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            _tcpSocket.Bind(new IPEndPoint(address, bindPort));
+            _tcpSocket.Listen(100);
 
             HostName = address.ToString();
 
-            Socket socket;
+            _alive = true;
+
+            var receiveTask = ProcessReceiveUDP();
+
             try
             {
-                while (true)
+                while (_alive)
                 {
-                    socket = await _listener.AcceptAsync().ConfigureAwait(false);
+                    var socket = await _tcpSocket.AcceptAsync().ConfigureAwait(false);
                     socket.NoDelay = true;
-                    _ = ProcessSocket(socket);
+                    _ = ProcessPeer(socket);
                 }
             }
             catch { }
 
             ShutDown();
+
+            await receiveTask.ConfigureAwait(false);
         }
 
-        private async Task ProcessSocket(Socket socket)
+        private async Task ProcessPeer(Socket socket)
         {
             var peer = new AsyncPeer(socket);
-            _peers.TryAdd(peer.PeerId, peer);
+            _peers.TryAdd(peer.EndPoint.Address, peer);
 
             try
             {
@@ -64,16 +75,61 @@ namespace AsyncTcp
             }
             catch { }
 
-            _peers.TryRemove(peer.PeerId, out _);
+            _peers.TryRemove(peer.EndPoint.Address, out _);
+        }
+
+        private async Task ProcessReceiveUDP()
+        {
+            try
+            {
+                while (_alive)
+                {
+                    var result = await _udpSocket
+                        .ReceiveFromAsync(AsyncTcp.UdpBuffer, SocketFlags.None, _blankEndpoint)
+                        .ConfigureAwait(false);
+
+                    var endpoint = (IPEndPoint)result.RemoteEndPoint;
+
+                    if (_peers.TryGetValue(endpoint.Address, out var peer))
+                    {
+                        // Write the peer response endpoint:port
+                        peer.UdpEndpoint = endpoint;
+
+                        await AsyncTcp.PeerHandler
+                            .HandleUDPPacket(peer, new ArraySegment<byte>(AsyncTcp.UdpBuffer, 0, result.ReceivedBytes))
+                            .ConfigureAwait(false);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        public Task Send(AsyncPeer peer, int type, object payload = null)
+        {
+            return peer.Send(type, payload);
+        }
+
+        public async Task SendUDPPacket(AsyncPeer peer, ArraySegment<byte> buffer)
+        {
+            try
+            {
+                await _udpSocket
+                    .SendToAsync(buffer, SocketFlags.None, peer.UdpEndpoint)
+                    .ConfigureAwait(false);
+            }
+            catch { }
         }
 
         public void ShutDown()
         {
             _alive = false;
 
+            try { _udpSocket.Shutdown(SocketShutdown.Both); } catch { }
+            try { _udpSocket.Close(); } catch { }
+
             // If we never connect listener.Shutdown throws an error, so try separately
-            try { _listener.Shutdown(SocketShutdown.Both); } catch { }
-            try { _listener.Close(); } catch { }
+            try { _tcpSocket.Shutdown(SocketShutdown.Both); } catch { }
+            try { _tcpSocket.Close(); } catch { }
 
             if (_peers.Count == 0)
                 return;
@@ -87,7 +143,7 @@ namespace AsyncTcp
 
         public async Task RemovePeer(AsyncPeer peer, int type, object payload = null)
         {
-            if (_peers.TryRemove(peer.PeerId, out _))
+            if (_peers.TryRemove(peer.EndPoint.Address, out _))
             {
                 await peer.Send(type, payload).ConfigureAwait(false);
             }

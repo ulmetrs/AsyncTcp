@@ -1,10 +1,11 @@
-﻿using AsyncTcpBytes;
+﻿using AsyncTcp;
 using AsyncTest;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 namespace ClientApp
@@ -17,8 +18,6 @@ namespace ClientApp
 
         public ClientScenarios(IPAddress address)
         {
-            AsyncTcp.Initialize(this);
-
             _address = address;
             _xorShifter = new XorShift(true);
             _random = new Random();
@@ -34,11 +33,18 @@ namespace ClientApp
             await Console.Out.WriteLineAsync($"Client (PeerId: {peer.PeerId}) disconnected...").ConfigureAwait(false);
         }
 
+        public Task HandleUDPPacket(AsyncPeer peer, Memory<byte> buffer)
+        {
+            var waypoint = MemoryMarshal.Read<Waypoint>(buffer.Span);
+            //_ = HandleWaypoint(peer, waypoint); // TODO make value task?
+            return Task.CompletedTask;
+        }
+
         // Simple implementation of packing the stream however you want from the Message you Queued to send
         // Custom bit packing along with pooled object can provide the optimal performance for this
         public async Task PackMessage(AsyncPeer peer, int type, object payload, Stream packToStream)
         {
-            using (var inputStream = AsyncTcp.StreamManager.GetStream())
+            using (var inputStream = new MemoryStream())
             {
                 // Serialize object into the managed stream
                 Utf8Json.JsonSerializer.Serialize(inputStream, payload);
@@ -85,7 +91,7 @@ namespace ClientApp
             var compressed = Convert.ToBoolean(unpackFromStream.ReadByte());
 
             // Stupid Utf8Json Wont Serialize a Stream with an offset, so we need to make this either way
-            using (var outputStream = AsyncTcp.StreamManager.GetStream())
+            using (var outputStream = new MemoryStream())
             {
                 if (compressed)
                 {
@@ -221,7 +227,7 @@ namespace ClientApp
                     index = i,
                     data = _xorShifter.GetRandomBytes(5000),
                 };
-                await client.Peer.Send(1, letter).ConfigureAwait(false);
+                await client.Send(1, letter).ConfigureAwait(false);
                 await Task.Delay(_random.Next(1, 3) * 1000);
             }
         }

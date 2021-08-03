@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Buffers;
+using System.IO;
 using System.IO.Pipelines;
+using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -8,12 +10,14 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 
-namespace AsyncTcpBytes
+namespace AsyncTcp
 {
     public class AsyncPeer
     {
         private static long GlobalPeerId = -1;
         public long PeerId { get; } = Interlocked.Increment(ref GlobalPeerId);
+        public IPEndPoint EndPoint { get; }
+        public IPEndPoint UdpEndpoint { get; set; }
 
         private readonly Socket _socket;
         private readonly Channel<(int, object)> _sendChannel;
@@ -23,9 +27,9 @@ namespace AsyncTcpBytes
         private int _keepAliveCount;
 
         // Peers are constructed from connected sockets
-        internal AsyncPeer(
-            Socket socket)
+        internal AsyncPeer(Socket socket)
         {
+            EndPoint = (IPEndPoint)socket.RemoteEndPoint;
             _socket = socket;
             _sendChannel = Channel.CreateUnbounded<(int, object)>(new UnboundedChannelOptions() { SingleReader = true });
             _sendCancel = new CancellationTokenSource();
@@ -37,7 +41,6 @@ namespace AsyncTcpBytes
         {
             _alive = true;
 
-            // Start the 3 Running Processing Steps for a Peer
             var receiveTask = ProcessReceive();
             var sendTask = ProcessSend();
             var keepAliveTask = KeepAlive();
@@ -66,7 +69,6 @@ namespace AsyncTcpBytes
         }
 
         // Shutdown called manually or via send error
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void ShutDown()
         {
             // Idiosynchrosies for socket class throw exceptions in various scenarios,
@@ -75,7 +77,6 @@ namespace AsyncTcpBytes
             try { _socket.Close(); } catch { }
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private async Task ProcessReceive()
         {
             var netStream = new NetworkStream(_socket);
@@ -95,7 +96,7 @@ namespace AsyncTcpBytes
                         // Handle Keep Alive Check
                         if (info.Type == AsyncTcp.KeepAliveType)
                         {
-                            // Reset out KeepAliveCount to indicate we have received some data from the client
+                            // Reset our KeepAliveCount to indicate we have received some data from the client
                             Interlocked.Exchange(ref _keepAliveCount, 0);
                         }
 
@@ -139,6 +140,8 @@ namespace AsyncTcpBytes
             }
 
             await reader.CompleteAsync().ConfigureAwait(false);
+
+            AsyncTcp.Log(PeerId, "COMPLETED RECEIVE");
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -195,8 +198,9 @@ namespace AsyncTcpBytes
             return true;
         }
 
+        /*
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public async Task Send(int type)
+        internal async Task Send(int type)
         {
             try
             {
@@ -207,9 +211,9 @@ namespace AsyncTcpBytes
             }
             catch { }
         }
+        */
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public async Task Send(int type, object payload)
+        public async Task Send(int type, object payload = null)
         {
             try
             {
@@ -221,7 +225,6 @@ namespace AsyncTcpBytes
             catch { }
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private async Task ProcessSend()
         {
             try
@@ -242,7 +245,7 @@ namespace AsyncTcpBytes
         private readonly byte[] header = new byte[8];
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public async Task ProcessSend(int type, object payload)
+        private async Task ProcessSend(int type, object payload)
         {
             if (payload == null)
             {
@@ -276,9 +279,10 @@ namespace AsyncTcpBytes
 
                 // Go back and write the header now that we know the size
                 stream.Position = 0;
-                WriteInt(header, 0, type);
-                WriteInt(header, 4, (int)stream.Length - 8);
-                stream.Write(header, 0, 8);
+                //WriteInt(header, 0, type);
+                //WriteInt(header, 4, (int)stream.Length - 8);
+                //stream.Write(header, 0, 8);
+                WriteHeader(stream, type, (int)stream.Length - 8);
 
                 stream.Position = 0;
                 if (stream.TryGetBuffer(out var buffer))
@@ -307,6 +311,16 @@ namespace AsyncTcpBytes
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void WriteHeader(Stream stream, int type, int size)
+        {
+            Span<byte> buffer = stackalloc byte[4];
+            MemoryMarshal.Write(buffer, ref type);
+            stream.Write(buffer);
+            MemoryMarshal.Write(buffer, ref size);
+            stream.Write(buffer);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void WriteInt(byte[] buffer, int offset, int value)
         {
             for (int i = 0, j = 0; i < 4; i++, j++)
@@ -317,7 +331,6 @@ namespace AsyncTcpBytes
 
         private readonly int delayMS = 1000;
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private async Task KeepAlive()
         {
             var count = AsyncTcp.KeepAliveInterval;
@@ -335,6 +348,7 @@ namespace AsyncTcpBytes
                     // If we have counted at least 3 keepAlives and we havn't received any assume the connection is closed
                     if (_alive && _keepAliveCount >= 3)
                     {
+                        AsyncTcp.Log(PeerId, "KeepAlive Count >= 3, Shutting Down");
                         ShutDown();
                         break;
                     }

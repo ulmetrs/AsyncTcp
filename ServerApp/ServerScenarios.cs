@@ -1,8 +1,10 @@
-﻿using AsyncTcpBytes;
+﻿using AsyncTcp;
+using AsyncTest;
 using System;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 namespace ServerApp
@@ -11,7 +13,14 @@ namespace ServerApp
     {
         public ServerScenarios()
         {
-            AsyncTcp.Initialize(this);
+            
+        }
+
+        public Task HandleUDPPacket(AsyncPeer peer, Memory<byte> buffer)
+        {
+            var waypoint = MemoryMarshal.Read<Waypoint>(buffer.Span);
+            //_ = HandleWaypoint(peer, waypoint); // TODO make value task?
+            return Task.CompletedTask;
         }
 
         public async Task PeerConnected(AsyncPeer peer)
@@ -28,7 +37,7 @@ namespace ServerApp
         // Custom bit packing along with pooled object can provide the optimal performance for this
         public async Task PackMessage(AsyncPeer peer, int type, object payload, Stream packToStream)
         {
-            using (var inputStream = AsyncTcp.StreamManager.GetStream())
+            using (var inputStream = new MemoryStream())
             {
                 // Serialize object into the managed stream
                 Utf8Json.JsonSerializer.Serialize(inputStream, payload);
@@ -75,7 +84,7 @@ namespace ServerApp
             var compressed = Convert.ToBoolean(unpackFromStream.ReadByte());
 
             // Stupid Utf8Json Wont Serialize a Stream with an offset, so we need to make this either way
-            using (var outputStream = AsyncTcp.StreamManager.GetStream())
+            using (var outputStream = new MemoryStream())
             {
                 if (compressed)
                 {
@@ -150,6 +159,16 @@ namespace ServerApp
         {
             await Task.Delay(10000).ConfigureAwait(false);
             server.ShutDown();
+        }
+
+        public Task PackUnreliableMessage(AsyncPeer peer, int type, object payload, Stream packToStream)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Task UnpackUnreliableMessage(AsyncPeer peer, int type, Stream unpackFromStream)
+        {
+            throw new NotImplementedException();
         }
     }
 }
