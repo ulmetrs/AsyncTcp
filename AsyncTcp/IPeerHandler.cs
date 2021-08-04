@@ -1,5 +1,5 @@
 ﻿using System;
-using System.IO;
+using System.Buffers;
 using System.Threading.Tasks;
 
 namespace AsyncTcp
@@ -8,11 +8,7 @@ namespace AsyncTcp
     {
         Task PeerConnected(AsyncPeer peer);
         Task PeerDisconnected(AsyncPeer peer);
-
-        Task HandleUDPPacket(AsyncPeer peer, ArraySegment<byte> buffer);
-
-        Task UnpackMessage(AsyncPeer peer, int type, Stream unpackFromStream);
-        Task PackMessage(AsyncPeer peer, int type, object payload, Stream packToStream);
-        Task DisposeMessage(AsyncPeer peer, int type, object payload);
+        Task ReceiveUnreliable(AsyncPeer peer, ReadOnlyMemory<byte> buffer);
+        Task Receive(AsyncPeer peer, int type, ReadOnlySequence<byte> buffer);
     }
 }

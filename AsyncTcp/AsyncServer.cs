@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 
 namespace AsyncTcp
@@ -25,6 +26,7 @@ namespace AsyncTcp
             _peers = new ConcurrentDictionary<IPAddress, AsyncPeer>();
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public async Task Start(IPAddress address = null, int bindPort = 9050)
         {
             if (_alive)
@@ -46,7 +48,7 @@ namespace AsyncTcp
 
             _alive = true;
 
-            var receiveTask = ProcessReceiveUDP();
+            var receiveTask = ProcessReceiveUnreliable();
 
             try
             {
@@ -64,6 +66,7 @@ namespace AsyncTcp
             await receiveTask.ConfigureAwait(false);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private async Task ProcessPeer(Socket socket)
         {
             var peer = new AsyncPeer(socket);
@@ -78,14 +81,15 @@ namespace AsyncTcp
             _peers.TryRemove(peer.EndPoint.Address, out _);
         }
 
-        private async Task ProcessReceiveUDP()
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private async Task ProcessReceiveUnreliable()
         {
             try
             {
                 while (_alive)
                 {
                     var result = await _udpSocket
-                        .ReceiveFromAsync(AsyncTcp.UdpBuffer, SocketFlags.None, _blankEndpoint)
+                        .ReceiveFromAsync(new ArraySegment<byte>(AsyncTcp.UdpBuffer), SocketFlags.None, _blankEndpoint)
                         .ConfigureAwait(false);
 
                     var endpoint = (IPEndPoint)result.RemoteEndPoint;
@@ -96,7 +100,7 @@ namespace AsyncTcp
                         peer.UdpEndpoint = endpoint;
 
                         await AsyncTcp.PeerHandler
-                            .HandleUDPPacket(peer, new ArraySegment<byte>(AsyncTcp.UdpBuffer, 0, result.ReceivedBytes))
+                            .ReceiveUnreliable(peer, new ReadOnlyMemory<byte>(AsyncTcp.UdpBuffer, 0, result.ReceivedBytes))
                             .ConfigureAwait(false);
                     }
                 }
@@ -104,20 +108,28 @@ namespace AsyncTcp
             catch { }
         }
 
-        public Task Send(AsyncPeer peer, int type, object payload = null)
-        {
-            return peer.Send(type, payload);
-        }
-
-        public async Task SendUDPPacket(AsyncPeer peer, ArraySegment<byte> buffer)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public async Task SendUnreliable(AsyncPeer peer, ReadOnlyMemory<byte> buffer)
         {
             try
             {
                 await _udpSocket
-                    .SendToAsync(buffer, SocketFlags.None, peer.UdpEndpoint)
+                    .SendToAsync(buffer.GetArray(), SocketFlags.None, peer.UdpEndpoint)
                     .ConfigureAwait(false);
             }
             catch { }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Task Send(AsyncPeer peer, int type)
+        {
+            return peer.Send(type);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Task Send(AsyncPeer peer, int type, ReadOnlyMemory<byte> buffer)
+        {
+            return peer.Send(type, buffer);
         }
 
         public void ShutDown()
@@ -141,12 +153,12 @@ namespace AsyncTcp
             }
         }
 
-        public async Task RemovePeer(AsyncPeer peer, int type, object payload = null)
+        public Task RemovePeer(AsyncPeer peer, ReadOnlyMemory<byte> buffer)
         {
             if (_peers.TryRemove(peer.EndPoint.Address, out _))
-            {
-                await peer.Send(type, payload).ConfigureAwait(false);
-            }
+                return peer.Send(AsyncTcp.ErrorType, buffer);
+
+            return Task.CompletedTask;
         }
     }
 }

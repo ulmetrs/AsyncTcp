@@ -1,8 +1,9 @@
 ﻿using Microsoft.Extensions.Logging;
-using Microsoft.IO;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO.Pipelines;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace AsyncTcp
@@ -14,7 +15,6 @@ namespace AsyncTcp
         public static int KeepAliveType { get; set; } = -1;
         public static int KeepAliveInterval { get; set; } = 10;
         public static StreamPipeReaderOptions ReceivePipeOptions { get; set; } = new StreamPipeReaderOptions();
-        public static RecyclableMemoryStreamManager StreamManager { get; set; } = new RecyclableMemoryStreamManager();
         public static byte[] UdpBuffer { get; set; } = new byte[512];
 
         // Must initialize
@@ -24,7 +24,9 @@ namespace AsyncTcp
 
         internal static bool Initialized;
 
-        private static IDictionary<int, byte[]> _headerBytes;
+        private static IDictionary<int, byte[]> _headers;
+
+        private static ConcurrentBag<byte[]> _headerBuffers;
 
         public static void Initialize(ILogger logger, IPeerHandler peerHandler)
         {
@@ -32,7 +34,8 @@ namespace AsyncTcp
             PeerHandler = peerHandler;
             Initialized = true;
 
-            _headerBytes = new Dictionary<int, byte[]>();
+            _headers = new Dictionary<int, byte[]>();
+            _headerBuffers = new ConcurrentBag<byte[]>();
         }
 
         public static void Log(long peerId, string message)
@@ -41,15 +44,29 @@ namespace AsyncTcp
         }
 
         // Lazy Memoize our Zero Size Header Bytes for Sending
-        internal static byte[] HeaderBytes(int type)
+        internal static byte[] Headers(int type)
         {
-            if (_headerBytes.TryGetValue(type, out var bytes))
+            if (_headers.TryGetValue(type, out var header))
             {
-                return bytes;
+                return header;
             }
-            _headerBytes[type] = new byte[8];
-            BitConverter.GetBytes(type).CopyTo(_headerBytes[type], 0);
-            return _headerBytes[type];
+            _headers[type] = new byte[8];
+            MemoryMarshal.Write(new Span<byte>(_headers[type], 0, 4), ref type);
+            return _headers[type];
+        }
+
+        internal static byte[] GetHeaderBuffer()
+        {
+            if (_headerBuffers.TryTake(out var buffer))
+            {
+                return buffer;
+            }
+            return new byte[8];
+        }
+
+        internal static void ReturnHeaderBuffer(byte[] buffer)
+        {
+            _headerBuffers.Add(buffer);
         }
     }
 }

@@ -27,12 +27,14 @@ namespace ServerApp
 
             var hostInfo = Dns.GetHostEntry(Dns.GetHostName());
             var address = hostInfo.AddressList.FirstOrDefault(_ => _.AddressFamily == AddressFamily.InterNetwork);
-            var socket = new Socket(address.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
-            socket.Bind(new IPEndPoint(IPAddress.Any, 9050));
+            //var socket = new Socket(address.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
+            //socket.Bind(new IPEndPoint(IPAddress.Any, 9050));
 
-            Console.WriteLine("Start process socket...");
+            //Console.WriteLine("Start process socket...");
 
-            await ProcessSocketShared(socket).ConfigureAwait(false);
+            //await ProcessSocketShared(socket).ConfigureAwait(false);
+            
+
         }
 
         // 9594

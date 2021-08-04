@@ -1,7 +1,7 @@
 ﻿using System;
-using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 
 namespace AsyncTcp
@@ -20,6 +20,7 @@ namespace AsyncTcp
                 throw new Exception("AsyncTcp must be initialized before creating a client");
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public async Task Start(IPAddress address, int bindPort = 9050)
         {
             if (_alive)
@@ -37,7 +38,7 @@ namespace AsyncTcp
 
             _alive = true;
 
-            var receiveTask = ProcessReceiveUDP();
+            var receiveTask = ProcessReceiveUnreliable();
 
             try
             {
@@ -53,40 +54,50 @@ namespace AsyncTcp
             await receiveTask.ConfigureAwait(false);
         }
 
-        private async Task ProcessReceiveUDP()
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private async Task ProcessReceiveUnreliable()
         {
             try
             {
                 while (_alive)
                 {
                     var result = await _udpSocket
-                        .ReceiveFromAsync(AsyncTcp.UdpBuffer, SocketFlags.None, _blankEndpoint)
+                        .ReceiveFromAsync(new ArraySegment<byte>(AsyncTcp.UdpBuffer), SocketFlags.None, _blankEndpoint)
                         .ConfigureAwait(false);
 
                     await AsyncTcp.PeerHandler
-                        .HandleUDPPacket(_peer, new ArraySegment<byte>(AsyncTcp.UdpBuffer, 0, result.ReceivedBytes))
+                        .ReceiveUnreliable(_peer, new ReadOnlyMemory<byte>(AsyncTcp.UdpBuffer, 0, result.ReceivedBytes))
                         .ConfigureAwait(false);
                 }
             }
             catch { }
         }
 
-        public async Task SendUDPPacket(ArraySegment<byte> buffer)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public async Task SendUnreliable(ReadOnlyMemory<byte> buffer)
         {
             try
             {
                 await _udpSocket
-                    .SendToAsync(buffer, SocketFlags.None, _peer.EndPoint)
+                    .SendToAsync(buffer.GetArray(), SocketFlags.None, _peer.EndPoint)
                     .ConfigureAwait(false);
             }
             catch { }
         }
 
-        public Task Send(int type, object payload = null)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Task Send(int type)
         {
-            return _peer.Send(type, payload);
+            return _peer.Send(type);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Task Send(int type, ReadOnlyMemory<byte> buffer)
+        {
+            return _peer.Send(type, buffer);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void ShutDown()
         {
             _alive = false;
