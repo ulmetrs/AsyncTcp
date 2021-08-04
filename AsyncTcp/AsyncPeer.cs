@@ -141,6 +141,7 @@ namespace AsyncTcp
 
                 if (info.Size == 0)
                 {
+                    info.Buffer = ReadOnlySequence<byte>.Empty;
                     buffer = buffer.Slice(8);
                     return true;
                 }
@@ -160,7 +161,7 @@ namespace AsyncTcp
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Task Send(int type)
         {
-            return Send(type, default(ReadOnlyMemory<byte>));
+            return Send(type, ReadOnlyMemory<byte>.Empty);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
